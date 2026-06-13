@@ -1,6 +1,6 @@
 /* BRIDGE INITIALIZATION & CORE CONTROL */
-
 // Firebase initialization using CDN Globals (No import errors)
+
 const firebaseConfig = {
   apiKey: "AIzaSyCE-bz-QbLpAF4qLqejGHtE3qS8zdQjmAY",
   authDomain: "aviator-b8af3.firebaseapp.com",
@@ -150,12 +150,14 @@ if (historyDropdownTrigger && dropdownPanel) {
         dropdownPanel.classList.toggle("show");
     };
 }
+
 if (dropdownCloseBtn && dropdownPanel) {
     dropdownCloseBtn.onclick = (e) => {
         e.stopPropagation();
         dropdownPanel.classList.remove("show");
     };
 }
+
 document.addEventListener("click", (e) => {
     if (dropdownPanel && !dropdownPanel.contains(e.target) && e.target !== historyDropdownTrigger) {
         dropdownPanel.classList.remove("show");
@@ -378,7 +380,6 @@ function animateEngine(timestamp) {
     if (db) {
         db.ref("currentRound/multiplier").set(parseFloat(currentMultiplier.toFixed(2)));
     }
-
     window.dispatchEvent(new CustomEvent("multiplierUpdate", { detail: { multiplier: currentMultiplier } }));
     animationFrameId = requestAnimationFrame(animateEngine);
 }
