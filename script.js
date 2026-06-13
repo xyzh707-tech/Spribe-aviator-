@@ -160,7 +160,6 @@ if (db) {
         });
     }
 
-    // Continuously monitor the host seat safely
     db.ref("currentRound/hostId").on("value", (snap) => {
         const val = snap.val();
         if (!val) {
@@ -170,7 +169,6 @@ if (db) {
         }
     });
 
-    // Client Side Listeners for State and Live Updates
     db.ref("currentRound/state").on("value", (snap) => {
         const state = snap.val() || "IDLE";
         remoteRoundState = state;
@@ -208,18 +206,19 @@ if (db) {
     updateHistoryUI(localHistory);
 }
 
-/* ANTI-FREEZE SAFETY BUFFER (Force resets game if tab hangs) */
+/* ANTI-FREEZE CORE RECOVERY (GitHub Safe State Unlocker) */
 setInterval(() => {
-    if (isCrashed || remoteRoundState === "CRASHED") {
-        // Safe check to unlock state if engine gets stuck on flew away screen
-        isCrashed = false;
-        remoteRoundState = "IDLE";
-        if (isHost || !db) {
-            console.log("Anti-freeze trigger: Resetting frozen engine state.");
-            startMasterLoop();
+    // Agar game 14 seconds tak FLIGHT state me fasa hai aur local status crash ho chuka hai, use force start karo
+    if (isCrashed || remoteRoundState === "CRASHED" || remoteRoundState === "FLIGHT") {
+        if (!startTime || (performance.now() - startTime > 15000)) {
+            console.log("Anti-Freeze Buffer Alert: Resetting stuck state machinery.");
+            isCrashed = false;
+            remoteRoundState = "IDLE";
+            if (animationFrameId) cancelAnimationFrame(animationFrameId);
+            if (isHost || !db) startMasterLoop();
         }
     }
-}, 7500);
+}, 5000);
 
 // Toggle Dropdown Sheet Events
 if (historyDropdownTrigger && dropdownPanel) {
@@ -242,7 +241,7 @@ document.addEventListener("click", (e) => {
     }
 });
 
-/* CHROMATIC RENDERING ENGINE (Optimized to prevent memory leak freeze) */
+/* CHROMATIC RENDERING ENGINE (Optimized & Taint-Safe for GitHub Pages) */
 let chromaInterval = null;
 function removeBlackFromVideo() {
     if (!planeVideo || !planeCanvas || !ctx || planeVideo.paused || planeVideo.ended) return;
@@ -256,12 +255,13 @@ function removeBlackFromVideo() {
         const data = imageData.data;
         for (let i = 0; i < data.length; i += 4) {
             if (data[i] < 15 && data[i + 1] < 15 && data[i + 2] < 15) {
-                data[i + 3] = 0; // Alpha transparent
+                data[i + 3] = 0; 
             }
         }
         ctx.putImageData(imageData, 0, 0);
     } catch(e) {
-        // Fail-safe fallbacks
+        // Safe bypass if Canvas gets tainted on remote hosting like GitHub
+        console.warn("Chroma filter drawing disabled due to CORS/Taint protection.");
     }
 }
 
@@ -269,25 +269,24 @@ if (planeVideo) {
     planeVideo.muted = true; 
     planeVideo.setAttribute('playsinline', '');
     planeVideo.crossOrigin = "anonymous"; 
+    
     planeVideo.addEventListener('play', () => {
         if(chromaInterval) clearInterval(chromaInterval);
-        // Using high performance interval instead of recursive RAF to stop memory leaks
         chromaInterval = setInterval(removeBlackFromVideo, 1000 / 30); 
-        if (!isGameStartedYet) {
-            isGameStartedYet = true;
-            startMasterLoop();
-        }
+        triggerSafeStart();
     });
     
-    // Backup safe start trigger
     planeVideo.addEventListener('loadeddata', () => {
-        planeVideo.play().catch(() => {
-            if(!isGameStartedYet) { 
-                isGameStartedYet = true; 
-                startMasterLoop(); 
-            }
-        });
+        planeVideo.play().catch(() => triggerSafeStart());
     });
+}
+
+// Fallback logic if video block fails to load or permissions freeze it
+function triggerSafeStart() {
+    if (!isGameStartedYet) {
+        isGameStartedYet = true;
+        startMasterLoop();
+    }
 }
 
 function updateCounterColor(multiplier) {
@@ -332,7 +331,7 @@ function executeLocalTimerUI() {
     
     if (timerLine) {
         timerLine.classList.remove("timer-active");
-        setTimeout(() => { timerLine.classList.add("timer-active"); }, 20);
+        setTimeout(() => { timerLine.classList.add("timer-active"); }, 50);
     }
 }
 
@@ -350,7 +349,10 @@ function startMasterLoop() {
 function executeLocalFlightUI() {
     gameElements.forEach(el => { if (el) el.style.display = "none"; }); 
     if (counter) counter.style.display = "block"; 
-    startTime = null; isCrashed = false; isHoldingAtTop = false; holdStartTime = null;
+    startTime = performance.now(); 
+    isCrashed = false; 
+    isHoldingAtTop = false; 
+    holdStartTime = null;
     
     if (graphArea) graphArea.style.setProperty('background', '#000000', 'important');
     if (counter) {
@@ -499,7 +501,7 @@ function animateEngine(timestamp) {
 }
 
 function executeLocalCrashSequence(lastX, lastY) {
-    if(isCrashed) return; // Escape duplicate crash calls
+    if(isCrashed) return; 
     window.dispatchEvent(new CustomEvent("gameCrashed"));
     isCrashed = true;
     if (animationFrameId) cancelAnimationFrame(animationFrameId);
@@ -545,12 +547,8 @@ function executeLocalCrashSequence(lastX, lastY) {
 }
 
 window.onload = () => {
-    setTimeout(() => {
-        if (!isGameStartedYet) { 
-            isGameStartedYet = true; 
-            startMasterLoop(); 
-        }
-    }, 2000);
+    // Safe initialization loop start 
+    setTimeout(triggerSafeStart, 1500);
 };
 
 /* TABS & INPUT LOGIC CONTROL */
