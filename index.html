@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Aviator Real UI with Professional Graph</title>
+    <link rel="stylesheet" href="style.css">
+    
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+</head>
+<body>
+    <div class="topbar">
+        <div class="logo">Aviator</div>
+        <div class="balance">0.44 INR</div>
+    </div>
+
+    <div class="history-section-container">
+        <div class="history-header-wrapper">
+            <div class="multi-bar" id="historyMinimalBar">
+                </div>
+            <div class="history-dropdown-btn" id="historyDropdownTrigger">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="#9ea0a5">
+                    <path d="M7 10l5 5 5-5z"/>
+                </svg>
+            </div>
+        </div>
+
+        <div class="round-history-dropdown" id="roundHistoryDropdownPanel">
+            <div class="dropdown-header">
+                <span>ROUND HISTORY</span>
+                <span class="dropdown-close-btn" id="dropdownCloseTrigger">✕</span>
+            </div>
+            <div class="dropdown-grid" id="historyMatrixGrid">
+                </div>
+        </div>
+    </div>
+
+    <div class="game-box" id="gameBox">
+        <img src="./image1.png" class="top-banner game-element image-blend">
+        
+        <div class="timer-wrap game-element">
+            <div class="timer-line" id="timerLine"></div>
+        </div>
+        
+        <img src="./image2.png" class="center-image game-element image-blend">
+        
+        <div class="graph-area" id="graphArea">
+            <div class="rays-bg" id="raysBg"></div>
+            
+            <div class="counter-container">
+                <div class="flew-away-text" id="flewAwayLabel">FLEW AWAY!</div>
+                <div class="multiplier-counter" id="counter">1.00x</div>
+            </div>
+            
+            <svg class="trail-svg">
+                <defs>
+                    <linearGradient id="redGlowFill" x1="0%" y1="0%" x2="0%" y2="100%">
+                        <stop offset="0%" stop-color="#e10514" stop-opacity="0.95"/>
+                        <stop offset="40%" stop-color="#e10514" stop-opacity="0.55"/>
+                        <stop offset="100%" stop-color="#e10514" stop-opacity="0.0"/>
+                    </linearGradient>
+                </defs>
+                <path id="glowAreaPath" d="" fill="url(#redGlowFill)" opacity="1"/>
+                <path id="trailPath" d="" fill="none" stroke="#e10514" stroke-width="5" stroke-linecap="round"/>
+            </svg>
+            
+            <div class="plane-container" id="planeContainer">
+                <video id="planeVideo" autoplay loop muted playsinline src="plane.mp4" crossorigin="anonymous"></video>
+                <canvas id="planeCanvas"></canvas>
+            </div>
+            
+            <div class="light-beam" id="lightBeam"></div>
+        </div>
+        
+        <div class="players">
+            <img src="./1000027001.png" class="player-img">
+            <img src="./1000027004.png" class="player-img">
+            <img src="./1000027001.png" class="player-img">
+            <div class="player-count">87</div>
+        </div>
+    </div>
+
+    <div class="bet-card">
+        <div class="switch">
+            <button class="active switch-btn">Bet</button>
+            <button class="switch-btn">Auto</button>
+        </div>
+        <div class="row">
+            <div class="left">
+                <div class="amount-box">
+                    <div class="circle minus">−</div>
+                    <input type="number" class="amount-input" value="10" min="10" max="8000" inputmode="numeric">
+                    <div class="circle plus">+</div>
+                </div>
+                <div class="quick">
+                    <button class="quick-btn" data-value="10">10</button>
+                    <button class="quick-btn" data-value="100">100</button>
+                    <button class="quick-btn" data-value="500">500</button>
+                    <button class="quick-btn" data-value="1000">1,000</button>
+                </div>
+            </div>
+            <div class="right">
+                <button class="bet-btn">
+                    <div class="waiting">WAITING FOR NEXT ROUND</div>
+                    <div class="bet-main">BET</div>
+                    <div class="bet-amount">10.00 INR</div>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <div class="bet-card">
+        <div class="switch">
+            <button class="active switch-btn">Bet</button>
+            <button class="switch-btn">Auto</button>
+        </div>
+        <div class="row">
+            <div class="left">
+                <div class="amount-box">
+                    <div class="circle minus">−</div>
+                    <input type="number" class="amount-input" value="10" min="10" max="8000" inputmode="numeric">
+                    <div class="circle plus">+</div>
+                </div>
+                <div class="quick">
+                    <button class="quick-btn" data-value="100">100</button>
+                    <button class="quick-btn" data-value="100">100</button>
+                    <button class="quick-btn" data-value="500">500</button>
+                    <button class="quick-btn" data-value="1000">1,000</button>
+                </div>
+            </div>
+            <div class="right">
+                <button class="bet-btn">
+                    <div class="waiting">WAITING FOR NEXT ROUND</div>
+                    <div class="bet-main">BET</div>
+                    <div class="bet-amount">10.00 INR</div>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <div class="bottom">
+        <div class="bottom-tabs">
+            <div class="tab active-tab">All Bets</div>
+            <div class="tab">My Bets</div>
+            <div class="tab">Top</div>
+        </div>
+        <div class="bet-info">
+            <div class="bet-left">
+                <div class="mini-users">
+                    <img src="image3.png">
+                    <img src="image4.png">
+                    <img src="image5.png">
+                </div>
+                <div style="font-size:14px;">359 Bets</div>
+            </div>
+            <div class="total">
+                <h2>0.00</h2>
+                <p>Total win INR</p>
+            </div>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+    <script src="script2.js"></script>
+    <script src="admin.js"></script>
+</body>
+</html>
