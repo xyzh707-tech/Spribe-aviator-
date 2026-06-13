@@ -1,6 +1,5 @@
 /* BRIDGE INITIALIZATION & CORE CONTROL */
 
-// Firebase initialization using CDN Globals (No import errors)
 const firebaseConfig = {
   apiKey: "AIzaSyCE-bz-QbLpAF4qLqejGHtE3qS8zdQjmAY",
   authDomain: "aviator-b8af3.firebaseapp.com",
@@ -12,14 +11,12 @@ const firebaseConfig = {
   measurementId: "G-2294PJHNHZ"
 };
 
-// Global handles initialize safely
 let db = null;
 if (typeof firebase !== 'undefined') {
     firebase.initializeApp(firebaseConfig);
     db = firebase.database();
 }
 
-// MULTI-DEVICE DRIVER SEAT ENGINE STATES
 const myUserId = "User_" + Math.floor(Math.random() * 100000);
 let isHost = false; 
 let remoteRoundState = "IDLE"; 
@@ -39,7 +36,6 @@ const raysBg = document.getElementById("raysBg");
 const lightBeam = document.getElementById("lightBeam");
 const multiBar = document.querySelector(".multi-bar");
 
-// Target Modal Components for History Dropdown Expand Tool
 const historyDropdownTrigger = document.getElementById("historyDropdownTrigger"); 
 const dropdownPanel = document.getElementById("roundHistoryDropdownPanel");
 const dropdownCloseBtn = document.getElementById("dropdownCloseTrigger");
@@ -52,11 +48,9 @@ let holdStartTime = null;
 let animationFrameId = null;
 let isGameStartedYet = false; 
 
-// Initial default, will be overwritten every round randomly
 let crashTarget = 15.00;
 const flyToTopDuration = 4000; 
 
-// ORIGINAL AVIATOR SCREEN BOUNDS
 const width = 460; 
 const height = 250;
 const startX = 35;           
@@ -66,7 +60,6 @@ const endY = height * 0.42;
 const tailOffsetX = 4;
 const tailOffsetY = 42;
 
-// Real Aviator Algorithm for Randomized Target Multiplier
 function generateRandomCrashTarget() {
     let rand = Math.random() * 100;
     if (rand < 11) {
@@ -80,7 +73,6 @@ function generateRandomCrashTarget() {
     }
 }
 
-// History updates sync UI builder with clean layouts & Dropdown content feeds
 function updateHistoryUI(historyArray) {
     if (!multiBar) return;
     multiBar.innerHTML = "";
@@ -133,7 +125,6 @@ function updateHistoryUI(historyArray) {
     }
 }
 
-// Live sync database collection callback hook
 if (db) {
     db.ref('history').limitToLast(35).on('value', (snapshot) => {
         const data = snapshot.val();
@@ -143,7 +134,6 @@ if (db) {
         }
     });
 
-    // Atomic Transaction for Driver Seat Selection
     function claimHostSeat() {
         db.ref("currentRound/hostId").transaction((currentHost) => {
             if (currentHost === null || currentHost === "") {
@@ -206,21 +196,16 @@ if (db) {
     updateHistoryUI(localHistory);
 }
 
-/* ANTI-FREEZE CORE RECOVERY (GitHub Safe State Unlocker) */
+/* ANTI-FREEZE RECOVERY LOCK */
 setInterval(() => {
-    // Agar game 14 seconds tak FLIGHT state me fasa hai aur local status crash ho chuka hai, use force start karo
-    if (isCrashed || remoteRoundState === "CRASHED" || remoteRoundState === "FLIGHT") {
-        if (!startTime || (performance.now() - startTime > 15000)) {
-            console.log("Anti-Freeze Buffer Alert: Resetting stuck state machinery.");
-            isCrashed = false;
-            remoteRoundState = "IDLE";
-            if (animationFrameId) cancelAnimationFrame(animationFrameId);
-            if (isHost || !db) startMasterLoop();
-        }
+    if (isCrashed || remoteRoundState === "CRASHED") {
+        isCrashed = false;
+        remoteRoundState = "IDLE";
+        if (animationFrameId) cancelAnimationFrame(animationFrameId);
+        if (isHost || !db) startMasterLoop();
     }
-}, 5000);
+}, 8000);
 
-// Toggle Dropdown Sheet Events
 if (historyDropdownTrigger && dropdownPanel) {
     historyDropdownTrigger.onclick = (e) => {
         e.stopPropagation();
@@ -241,7 +226,7 @@ document.addEventListener("click", (e) => {
     }
 });
 
-/* CHROMATIC RENDERING ENGINE (Optimized & Taint-Safe for GitHub Pages) */
+/* TAINT-SAFE CHROMATIC ENGINE */
 let chromaInterval = null;
 function removeBlackFromVideo() {
     if (!planeVideo || !planeCanvas || !ctx || planeVideo.paused || planeVideo.ended) return;
@@ -260,8 +245,7 @@ function removeBlackFromVideo() {
         }
         ctx.putImageData(imageData, 0, 0);
     } catch(e) {
-        // Safe bypass if Canvas gets tainted on remote hosting like GitHub
-        console.warn("Chroma filter drawing disabled due to CORS/Taint protection.");
+        // Silent catch for CORS/Taint errors on GitHub Pages
     }
 }
 
@@ -281,7 +265,6 @@ if (planeVideo) {
     });
 }
 
-// Fallback logic if video block fails to load or permissions freeze it
 function triggerSafeStart() {
     if (!isGameStartedYet) {
         isGameStartedYet = true;
@@ -331,7 +314,8 @@ function executeLocalTimerUI() {
     
     if (timerLine) {
         timerLine.classList.remove("timer-active");
-        setTimeout(() => { timerLine.classList.add("timer-active"); }, 50);
+        void timerLine.offsetWidth; // Force Reflow cleanly without freeze
+        timerLine.classList.add("timer-active");
     }
 }
 
@@ -349,7 +333,9 @@ function startMasterLoop() {
 function executeLocalFlightUI() {
     gameElements.forEach(el => { if (el) el.style.display = "none"; }); 
     if (counter) counter.style.display = "block"; 
-    startTime = performance.now(); 
+    
+    // Core Fix: Do NOT set startTime here with performance.now()
+    startTime = null; 
     isCrashed = false; 
     isHoldingAtTop = false; 
     holdStartTime = null;
@@ -454,6 +440,8 @@ function renderPathsAndPlane(cX, cY, cMultiplier) {
 function animateEngine(timestamp) {
     if (isCrashed) return;
     if (!isHost && db) return; 
+    
+    // Clean timing sync point
     if (!startTime) startTime = timestamp;
 
     let currentX, currentY;
@@ -516,7 +504,7 @@ function executeLocalCrashSequence(lastX, lastY) {
                 timestamp: firebase.database.ServerValue.TIMESTAMP
             });
         } catch (e) {
-            console.error("Database sync operation fault:", e);
+            console.error("Database fault sync:", e);
         }
     } else if (!db) {
         let localHistory = JSON.parse(localStorage.getItem("game_history")) || [];
@@ -547,8 +535,7 @@ function executeLocalCrashSequence(lastX, lastY) {
 }
 
 window.onload = () => {
-    // Safe initialization loop start 
-    setTimeout(triggerSafeStart, 1500);
+    setTimeout(triggerSafeStart, 1000);
 };
 
 /* TABS & INPUT LOGIC CONTROL */
