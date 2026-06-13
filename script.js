@@ -48,11 +48,6 @@ let holdStartTime = null;
 let animationFrameId = null;
 let isGameStartedYet = false; 
 
-// BACKGROUND DETONATION PROTECTION VARIABLES
-let isTabPaused = false;
-let totalPausedDuration = 0;
-let lastPauseTimestamp = 0;
-
 let crashTarget = 15.00;
 const flyToTopDuration = 4000; 
 
@@ -167,91 +162,60 @@ if (db) {
     db.ref("currentRound/state").on("value", (snap) => {
         const state = snap.val() || "IDLE";
         remoteRoundState = state;
-        if (!isHost) {
-            if (state === "TIMER") {
-                executeLocalTimerUI();
-            } else if (state === "FLIGHT") {
-                executeLocalFlightUI();
-            } else if (state === "CRASHED") {
-                if (animationFrameId) cancelAnimationFrame(animationFrameId);
-                isCrashed = true;
-                if (flewAwayLabel) flewAwayLabel.classList.add("show");
-                if (planeContainer) {
-                    planeContainer.style.transition = "left 0.7s cubic-bezier(0.4, 0.0, 0.2, 1), top 0.7s cubic-bezier(0.4, 0.0, 0.2, 1)";
-                    planeContainer.style.left = `${width + 180}px`; 
-                }
+        
+        if (state === "TIMER") {
+            executeLocalTimerUI();
+        } else if (state === "FLIGHT") {
+            executeLocalFlightUI();
+            // CORE FIX: Agar game flight par hai aur animation ruki hui hai toh use jabran shuru karo
+            if (animationFrameId) cancelAnimationFrame(animationFrameId);
+            animationFrameId = requestAnimationFrame(animateEngine);
+        } else if (state === "CRASHED") {
+            if (animationFrameId) cancelAnimationFrame(animationFrameId);
+            isCrashed = true;
+            if (flewAwayLabel) flewAwayLabel.classList.add("show");
+            if (planeContainer) {
+                planeContainer.style.transition = "left 0.7s cubic-bezier(0.4, 0.0, 0.2, 1), top 0.7s cubic-bezier(0.4, 0.0, 0.2, 1)";
+                planeContainer.style.left = `${width + 180}px`; 
             }
         }
     });
 
     db.ref("currentRound/multiplier").on("value", (snap) => {
-        if (!isHost && remoteRoundState === "FLIGHT" && !isTabPaused) {
+        if (!isHost && remoteRoundState === "FLIGHT") {
             const remoteMultiplier = parseFloat(snap.val() || 1.00);
             renderClientFrame(remoteMultiplier);
         }
     });
 
     db.ref("currentRound/crashTarget").on("value", (snap) => {
-        if (!isHost) {
-            crashTarget = parseFloat(snap.val() || 1.00);
-        }
+        crashTarget = parseFloat(snap.val() || 1.00);
     });
 } else {
     let localHistory = JSON.parse(localStorage.getItem("game_history")) || [1.32, 4.50, 11.20, 1.02];
     updateHistoryUI(localHistory);
 }
 
-/* ANTI-PAUSE: BACKGROUND SYNC & AUTO CONTINUATION ENGINE */
-document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "hidden") {
-        // Jab tum lock karke jaoge - Time record karo aur engine pause karo
-        isTabPaused = true;
-        lastPauseTimestamp = performance.now();
-        if (planeVideo) planeVideo.pause();
-    } else if (document.visibilityState === "visible") {
-        // Jab tum wapas aagaye - Pause duration nikal kar system ko offset do
-        isTabPaused = false;
-        if (planeVideo) planeVideo.play().catch(()=>{});
-        
-        if (lastPauseTimestamp > 0) {
-            let currentRecoveryTime = performance.now();
-            let dynamicDiff = currentRecoveryTime - lastPauseTimestamp;
-            totalPausedDuration += dynamicDiff; 
-        }
-
-        console.log("Welcome back! Recovered pause drift of: " + totalPausedDuration + "ms");
-
-        if (!db) {
-            // Offline Mode (Bina Firebase ke loop automatically safely continue hoga)
-            if (animationFrameId) cancelAnimationFrame(animationFrameId);
-            animationFrameId = requestAnimationFrame(animateEngine);
-        } else {
-            // Online Mode (Firebase state se re-sync)
-            db.ref("currentRound/state").once("value", (snap) => {
-                const liveState = snap.val() || "IDLE";
-                if (liveState === "FLIGHT") {
-                    if (animationFrameId) cancelAnimationFrame(animationFrameId);
-                    animationFrameId = requestAnimationFrame(animateEngine);
-                } else if (liveState === "TIMER" || liveState === "CRASHED") {
-                    totalPausedDuration = 0;
-                    startTime = null;
-                    if (isHost) startMasterLoop();
-                }
-            });
-        }
-    }
-});
-
-/* RECOVERY FORCE LOCKS */
+/* ANTI-STUCK WATCHDOG: Agar game 1.00x par crash ya hang ho, toh yeh force reset karega */
 setInterval(() => {
-    if ((isCrashed || remoteRoundState === "CRASHED") && !isTabPaused) {
-        isCrashed = false;
-        remoteRoundState = "IDLE";
-        totalPausedDuration = 0;
-        if (animationFrameId) cancelAnimationFrame(animationFrameId);
-        if (isHost || !db) startMasterLoop();
+    if (!db) {
+        // Offline Mode Auto Recovery
+        if (isCrashed || remoteRoundState === "CRASHED" || (!animationFrameId && remoteRoundState === "FLIGHT")) {
+            isCrashed = false;
+            remoteRoundState = "IDLE";
+            if (animationFrameId) cancelAnimationFrame(animationFrameId);
+            startMasterLoop();
+        }
+    } else {
+        // Online stuck protection
+        if (remoteRoundState === "CRASHED") {
+            isCrashed = false;
+            remoteRoundState = "IDLE";
+            if (animationFrameId) cancelAnimationFrame(animationFrameId);
+            if (isHost) startMasterLoop();
+        }
     }
-}, 7000);
+}, 5000);
 
 if (historyDropdownTrigger && dropdownPanel) {
     historyDropdownTrigger.onclick = (e) => {
@@ -273,10 +237,10 @@ document.addEventListener("click", (e) => {
     }
 });
 
-/* CHROMATIC TAINT-FREE RENDERER */
+/* CHROMATIC ENGINE */
 let chromaInterval = null;
 function removeBlackFromVideo() {
-    if (!planeVideo || !planeCanvas || !ctx || planeVideo.paused || planeVideo.ended || isTabPaused) return;
+    if (!planeVideo || !planeCanvas || !ctx || planeVideo.paused || planeVideo.ended) return;
     try {
         if (planeVideo.videoWidth > 0 && planeCanvas.width !== planeVideo.videoWidth) {
             planeCanvas.width = planeVideo.videoWidth;
@@ -299,15 +263,10 @@ if (planeVideo) {
     planeVideo.setAttribute('playsinline', '');
     planeVideo.crossOrigin = "anonymous"; 
     
-    planeVideo.addEventListener('play', () => {
-        if(chromaInterval) clearInterval(chromaInterval);
-        chromaInterval = setInterval(removeBlackFromVideo, 1000 / 30); 
-        triggerSafeStart();
-    });
+    if(chromaInterval) clearInterval(chromaInterval);
+    chromaInterval = setInterval(removeBlackFromVideo, 1000 / 30); 
     
-    planeVideo.addEventListener('loadeddata', () => {
-        planeVideo.play().catch(() => triggerSafeStart());
-    });
+    planeVideo.play().catch(() => {});
 }
 
 function triggerSafeStart() {
@@ -383,7 +342,6 @@ function executeLocalFlightUI() {
     isCrashed = false; 
     isHoldingAtTop = false; 
     holdStartTime = null;
-    totalPausedDuration = 0; // Fresh reset for loop metrics
     
     if (graphArea) graphArea.style.setProperty('background', '#000000', 'important');
     if (counter) {
@@ -436,7 +394,6 @@ function initGraphEngine() {
 }
 
 function renderClientFrame(currentMultiplier) {
-    if (isHost || isCrashed || isTabPaused) return; 
     let currentX, currentY;
     const cpX = startX + (endX - startX) * 0.45;
     const cpY = startY;
@@ -483,14 +440,11 @@ function renderPathsAndPlane(cX, cY, cMultiplier) {
 }
 
 function animateEngine(timestamp) {
-    if (isCrashed || isTabPaused) return;
-    if (!isHost && db) return; 
+    if (isCrashed) return;
+    if (db && !isHost) return; // Client hamesha Firebase snapshot se chalta hai
     
     if (!startTime) startTime = timestamp;
-
-    // Core Calculation with dynamic subtracted totalPausedDuration offset
-    let elapsed = timestamp - startTime - totalPausedDuration;
-    if (elapsed < 0) elapsed = 0; 
+    let elapsed = timestamp - startTime;
 
     let currentX, currentY;
     let currentMultiplier = 1.00;
@@ -514,9 +468,7 @@ function animateEngine(timestamp) {
         }
         if (progress >= 1) { isHoldingAtTop = true; holdStartTime = timestamp; }
     } else {
-        let holdElapsed = timestamp - holdStartTime - totalPausedDuration;
-        if (holdElapsed < 0) holdElapsed = 0;
-
+        let holdElapsed = timestamp - holdStartTime;
         currentX = endX;
         let wave1 = Math.sin(timestamp * 0.0025) * 14.5;
         let wave2 = Math.cos(timestamp * 0.005) * 3.5;
@@ -553,7 +505,7 @@ function executeLocalCrashSequence(lastX, lastY) {
                 timestamp: firebase.database.ServerValue.TIMESTAMP
             });
         } catch (e) {
-            console.error("Database connection recovery dynamic fault:", e);
+            console.error("Database connection recovery error:", e);
         }
     } else if (!db) {
         let localHistory = JSON.parse(localStorage.getItem("game_history")) || [];
@@ -579,12 +531,12 @@ function executeLocalCrashSequence(lastX, lastY) {
         planeContainer.style.top = `${lastY - 150}px`; 
     }
     setTimeout(() => { 
-        if ((isHost || !db) && !isTabPaused) startMasterLoop(); 
+        if (isHost || !db) startMasterLoop(); 
     }, 3000);
 }
 
 window.onload = () => {
-    setTimeout(triggerSafeStart, 1000);
+    triggerSafeStart();
 };
 
 /* TABS & INPUT LOGIC CONTROL */
