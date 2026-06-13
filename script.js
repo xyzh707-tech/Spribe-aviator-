@@ -143,13 +143,13 @@ if (db) {
         }
     });
 
-    // CRITICAL FIX: Atomic Transaction for Driver Seat Selection
+    // Atomic Transaction for Driver Seat Selection
     function claimHostSeat() {
         db.ref("currentRound/hostId").transaction((currentHost) => {
             if (currentHost === null || currentHost === "") {
-                return myUserId; // Seat is empty, take it
+                return myUserId; 
             }
-            return currentHost; // Keep current host
+            return currentHost; 
         }, (error, committed, snapshot) => {
             if (committed && snapshot.val() === myUserId) {
                 isHost = true;
@@ -204,19 +204,22 @@ if (db) {
         }
     });
 } else {
-    // LocalStorage fallback sync handler logic if Firebase fails or runs offline
     let localHistory = JSON.parse(localStorage.getItem("game_history")) || [1.32, 4.50, 11.20, 1.02];
     updateHistoryUI(localHistory);
 }
 
-/* ANTI-FREEZE RECOVERY LAYER (Prevents permanent state freezes) */
+/* ANTI-FREEZE SAFETY BUFFER (Force resets game if tab hangs) */
 setInterval(() => {
-    if (remoteRoundState === "FLIGHT" && isCrashed) {
-        console.log("Anti-Freeze Interceptor: Hard-resetting broken loop state.");
+    if (isCrashed || remoteRoundState === "CRASHED") {
+        // Safe check to unlock state if engine gets stuck on flew away screen
         isCrashed = false;
-        if (isHost || !db) startMasterLoop();
+        remoteRoundState = "IDLE";
+        if (isHost || !db) {
+            console.log("Anti-freeze trigger: Resetting frozen engine state.");
+            startMasterLoop();
+        }
     }
-}, 4500);
+}, 7500);
 
 // Toggle Dropdown Sheet Events
 if (historyDropdownTrigger && dropdownPanel) {
@@ -239,55 +242,50 @@ document.addEventListener("click", (e) => {
     }
 });
 
-/* CORS SAFE & GLITCH FREE CHROMA FILTER */
+/* CHROMATIC RENDERING ENGINE (Optimized to prevent memory leak freeze) */
+let chromaInterval = null;
 function removeBlackFromVideo() {
-    if (planeVideo && planeCanvas && ctx && planeVideo.readyState >= 2) {
-        try {
-            if (planeVideo.videoWidth > 0 && planeCanvas.width !== planeVideo.videoWidth) {
-                planeCanvas.width = planeVideo.videoWidth;
-                planeCanvas.height = planeVideo.videoHeight;
-            }
-            ctx.drawImage(planeVideo, 0, 0, planeCanvas.width, planeCanvas.height);
-            const imageData = ctx.getImageData(0, 0, planeCanvas.width, planeCanvas.height);
-            const data = imageData.data;
-            for (let i = 0; i < data.length; i += 4) {
-                if (data[i] < 15 && data[i + 1] < 15 && data[i + 2] < 15) {
-                    data[i + 3] = 0;
-                }
-            }
-            ctx.putImageData(imageData, 0, 0);
-            if (!isGameStartedYet) {
-                isGameStartedYet = true;
-                startMasterLoop();
-            }
-        } catch(e) {
-            if (planeCanvas.width > 0 && planeCanvas.height > 0) {
-                ctx.clearRect(0, 0, planeCanvas.width, planeCanvas.height);
-                ctx.drawImage(planeVideo, 0, 0, planeCanvas.width, planeCanvas.height);
-            }
-            if (!isGameStartedYet) {
-                isGameStartedYet = true;
-                startMasterLoop();
+    if (!planeVideo || !planeCanvas || !ctx || planeVideo.paused || planeVideo.ended) return;
+    try {
+        if (planeVideo.videoWidth > 0 && planeCanvas.width !== planeVideo.videoWidth) {
+            planeCanvas.width = planeVideo.videoWidth;
+            planeCanvas.height = planeVideo.videoHeight;
+        }
+        ctx.drawImage(planeVideo, 0, 0, planeCanvas.width, planeCanvas.height);
+        const imageData = ctx.getImageData(0, 0, planeCanvas.width, planeCanvas.height);
+        const data = imageData.data;
+        for (let i = 0; i < data.length; i += 4) {
+            if (data[i] < 15 && data[i + 1] < 15 && data[i + 2] < 15) {
+                data[i + 3] = 0; // Alpha transparent
             }
         }
+        ctx.putImageData(imageData, 0, 0);
+    } catch(e) {
+        // Fail-safe fallbacks
     }
-    requestAnimationFrame(removeBlackFromVideo);
 }
 
 if (planeVideo) {
     planeVideo.muted = true; 
     planeVideo.setAttribute('playsinline', '');
     planeVideo.crossOrigin = "anonymous"; 
+    planeVideo.addEventListener('play', () => {
+        if(chromaInterval) clearInterval(chromaInterval);
+        // Using high performance interval instead of recursive RAF to stop memory leaks
+        chromaInterval = setInterval(removeBlackFromVideo, 1000 / 30); 
+        if (!isGameStartedYet) {
+            isGameStartedYet = true;
+            startMasterLoop();
+        }
+    });
+    
+    // Backup safe start trigger
     planeVideo.addEventListener('loadeddata', () => {
-        planeVideo.play().then(() => {
-            removeBlackFromVideo();
-        }).catch(() => {
-            setTimeout(() => {
-                if(!isGameStartedYet) { 
-                    isGameStartedYet = true; 
-                    startMasterLoop(); 
-                }
-            }, 1000);
+        planeVideo.play().catch(() => {
+            if(!isGameStartedYet) { 
+                isGameStartedYet = true; 
+                startMasterLoop(); 
+            }
         });
     });
 }
@@ -334,8 +332,7 @@ function executeLocalTimerUI() {
     
     if (timerLine) {
         timerLine.classList.remove("timer-active");
-        void timerLine.offsetWidth; 
-        timerLine.classList.add("timer-active");
+        setTimeout(() => { timerLine.classList.add("timer-active"); }, 20);
     }
 }
 
@@ -401,6 +398,7 @@ function initGraphEngine() {
         crashTarget = generateRandomCrashTarget();
     }
     
+    if (animationFrameId) cancelAnimationFrame(animationFrameId);
     animationFrameId = requestAnimationFrame(animateEngine);
 }
 
@@ -501,6 +499,7 @@ function animateEngine(timestamp) {
 }
 
 function executeLocalCrashSequence(lastX, lastY) {
+    if(isCrashed) return; // Escape duplicate crash calls
     window.dispatchEvent(new CustomEvent("gameCrashed"));
     isCrashed = true;
     if (animationFrameId) cancelAnimationFrame(animationFrameId);
@@ -518,7 +517,6 @@ function executeLocalCrashSequence(lastX, lastY) {
             console.error("Database sync operation fault:", e);
         }
     } else if (!db) {
-        // LocalStorage Fallback safe save handler
         let localHistory = JSON.parse(localStorage.getItem("game_history")) || [];
         localHistory.push(parseFloat(crashTarget.toFixed(2)));
         if (localHistory.length > 40) localHistory.shift();
@@ -537,7 +535,7 @@ function executeLocalCrashSequence(lastX, lastY) {
     if (trailPath) trailPath.style.opacity = "0";
     if (glowAreaPath) glowAreaPath.style.opacity = "0";
     if (planeContainer) {
-        planeContainer.style.transition = "left 0.7s cubic-bezier(0.4, 0.0, 0.2, 1), top 0.7s cubic-bezier(0.4, 0.0, 0.2, 1)";
+        planeContainer.style.transition = "left 0.5s ease-in, top 0.5s ease-in";
         planeContainer.style.left = `${width + 180}px`; 
         planeContainer.style.top = `${lastY - 150}px`; 
     }
