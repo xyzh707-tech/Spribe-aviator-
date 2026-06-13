@@ -196,7 +196,38 @@ if (db) {
     updateHistoryUI(localHistory);
 }
 
-/* ANTI-FREEZE RECOVERY LOCK */
+/* ANTI-PAUSE & BACKGROUND RECOVERY API (Tab minimize aur lock screen ka pakka ilaj) */
+document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") {
+        console.log("Tab Active Detected! Syncing core engines...");
+        
+        // Purani bhatki hui saari animations ko clear karo
+        if (animationFrameId) cancelAnimationFrame(animationFrameId);
+        startTime = null; 
+        holdStartTime = null;
+        isHoldingAtTop = false;
+
+        if (db) {
+            // Agar database online hai, toh Firebase se live state wapas fetch karo aur sync karo
+            db.ref("currentRound/state").once("value", (snap) => {
+                const liveState = snap.val() || "IDLE";
+                remoteRoundState = liveState;
+                if (liveState === "FLIGHT") {
+                    executeLocalFlightUI();
+                } else {
+                    if (isHost) startMasterLoop();
+                }
+            });
+        } else {
+            // Offline mode mein bina ruke system ko fresh loop par daal do taaki freeze na ho
+            isCrashed = false;
+            remoteRoundState = "IDLE";
+            startMasterLoop();
+        }
+    }
+});
+
+/* BACKGROUND FORCE RESET LOCK */
 setInterval(() => {
     if (isCrashed || remoteRoundState === "CRASHED") {
         isCrashed = false;
@@ -314,7 +345,7 @@ function executeLocalTimerUI() {
     
     if (timerLine) {
         timerLine.classList.remove("timer-active");
-        void timerLine.offsetWidth; // Force Reflow cleanly without freeze
+        void timerLine.offsetWidth; 
         timerLine.classList.add("timer-active");
     }
 }
@@ -334,7 +365,6 @@ function executeLocalFlightUI() {
     gameElements.forEach(el => { if (el) el.style.display = "none"; }); 
     if (counter) counter.style.display = "block"; 
     
-    // Core Fix: Do NOT set startTime here with performance.now()
     startTime = null; 
     isCrashed = false; 
     isHoldingAtTop = false; 
@@ -441,7 +471,6 @@ function animateEngine(timestamp) {
     if (isCrashed) return;
     if (!isHost && db) return; 
     
-    // Clean timing sync point
     if (!startTime) startTime = timestamp;
 
     let currentX, currentY;
