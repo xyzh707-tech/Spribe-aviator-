@@ -1,4 +1,5 @@
 /* BRIDGE INITIALIZATION & CORE CONTROL */
+
 // Firebase initialization using CDN Globals (No import errors)
 const firebaseConfig = {
   apiKey: "AIzaSyCE-bz-QbLpAF4qLqejGHtE3qS8zdQjmAY",
@@ -251,7 +252,6 @@ function updateCounterColor(multiplier) {
 // Core Realtime Sync Engine (Handles Host management, Auto-Pause & Resume)
 function initSyncEngine() {
     if (!db) return;
-
     const engineRef = db.ref("gameState");
     const hostRef = db.ref("gameHost");
 
@@ -342,7 +342,6 @@ function resetEngineToTimer() {
         let selectedTarget = (overrideData && overrideData.active === true) ? parseFloat(overrideData.target) : generateRandomCrashTarget();
         
         db.ref("currentRound/crashTarget").set(parseFloat(selectedTarget.toFixed(2)));
-
         db.ref("gameState").set({
             status: "TIMER",
             startTime: now,
@@ -411,7 +410,6 @@ function renderTimerUI(stateStart, serverNow) {
     }
 
     window.dispatchEvent(new CustomEvent("gameRoundStarted"));
-
     if (isHost) {
         setTimeout(() => { startEngineFlight(); }, Math.max(0, remaining));
     }
@@ -439,6 +437,7 @@ function renderFlightUI(stateStart) {
     if (raysBg) { raysBg.classList.remove("rays-paused"); raysBg.style.filter = "none"; }
     if (trailPath) { trailPath.setAttribute("d", ""); trailPath.style.opacity = "1"; }
     if (glowAreaPath) { glowAreaPath.setAttribute("d", ""); glowAreaPath.style.opacity = "1"; }
+
     if (planeContainer) {
         planeContainer.style.transition = "none";
         planeContainer.style.display = "block";
@@ -465,6 +464,7 @@ function renderCrashUI(lastX, lastY) {
     }
     if (trailPath) trailPath.style.opacity = "0";
     if (glowAreaPath) glowAreaPath.style.opacity = "0";
+
     if (planeContainer) {
         planeContainer.style.transition = "left 0.7s cubic-bezier(0.4, 0.0, 0.2, 1), top 0.7s cubic-bezier(0.4, 0.0, 0.2, 1)";
         planeContainer.style.left = `${width + 180}px`;
@@ -542,14 +542,27 @@ function animateEngine() {
     animationFrameId = requestAnimationFrame(animateEngine);
 }
 
+// FIXED: Android Chrome standard bypass for Autoplay lock
 window.onload = () => {
     setTimeout(() => {
-        if (!isGameStartedYet && !planeVideo) { 
+        if (!isGameStartedYet) { 
+            console.log("GitHub Mobile Status: Forcing Sync Engine...");
             isGameStartedYet = true; 
             initSyncEngine(); 
         }
-    }, 2000);
+    }, 1500);
 };
+
+// Pure dynamic interface interaction trigger to unlock audio/video restrictions
+document.addEventListener("click", () => {
+    if (!isGameStartedYet) {
+        isGameStartedYet = true;
+        initSyncEngine();
+    }
+    if (planeVideo && planeVideo.paused) {
+        planeVideo.play().catch(e => console.log("Video setup handled gracefully."));
+    }
+}, { once: true });
 
 /* TABS & INPUT LOGIC CONTROL */
 document.querySelectorAll(".switch").forEach(sw=>{
