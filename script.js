@@ -1,6 +1,6 @@
 /* BRIDGE INITIALIZATION & CORE CONTROL */
-// Firebase initialization using CDN Globals (No import errors)
 
+// Firebase initialization using CDN Globals (No import errors)
 const firebaseConfig = {
   apiKey: "AIzaSyCE-bz-QbLpAF4qLqejGHtE3qS8zdQjmAY",
   authDomain: "aviator-b8af3.firebaseapp.com",
@@ -203,7 +203,20 @@ if (db) {
             crashTarget = parseFloat(snap.val() || 1.00);
         }
     });
+} else {
+    // LocalStorage fallback sync handler logic if Firebase fails or runs offline
+    let localHistory = JSON.parse(localStorage.getItem("game_history")) || [1.32, 4.50, 11.20, 1.02];
+    updateHistoryUI(localHistory);
 }
+
+/* ANTI-FREEZE RECOVERY LAYER (Prevents permanent state freezes) */
+setInterval(() => {
+    if (remoteRoundState === "FLIGHT" && isCrashed) {
+        console.log("Anti-Freeze Interceptor: Hard-resetting broken loop state.");
+        isCrashed = false;
+        if (isHost || !db) startMasterLoop();
+    }
+}, 4500);
 
 // Toggle Dropdown Sheet Events
 if (historyDropdownTrigger && dropdownPanel) {
@@ -314,6 +327,7 @@ function executeLocalTimerUI() {
     if (planeContainer) {
         planeContainer.style.transition = "none"; 
         planeContainer.style.display = "block";
+        planeContainer.style.opacity = "1";
         planeContainer.style.left = `${startX - tailOffsetX}px`;
         planeContainer.style.top = `${startY - tailOffsetY}px`;
     }
@@ -327,10 +341,9 @@ function executeLocalTimerUI() {
 
 function startMasterLoop() {
     if (db && !isHost) return; 
-
     if (db) db.ref("currentRound/state").set("TIMER");
-    executeLocalTimerUI();
 
+    executeLocalTimerUI();
     setTimeout(() => {
         if (db && !isHost) return; 
         initGraphEngine();
@@ -340,7 +353,6 @@ function startMasterLoop() {
 function executeLocalFlightUI() {
     gameElements.forEach(el => { if (el) el.style.display = "none"; }); 
     if (counter) counter.style.display = "block"; 
-
     startTime = null; isCrashed = false; isHoldingAtTop = false; holdStartTime = null;
     
     if (graphArea) graphArea.style.setProperty('background', '#000000', 'important');
@@ -357,6 +369,7 @@ function executeLocalFlightUI() {
     if (planeContainer) {
         planeContainer.style.transition = "none";
         planeContainer.style.display = "block";
+        planeContainer.style.opacity = "1";
         planeContainer.style.left = `${startX - tailOffsetX}px`;
         planeContainer.style.top = `${startY - tailOffsetY}px`;
     }
@@ -365,7 +378,6 @@ function executeLocalFlightUI() {
 
 function initGraphEngine() {
     executeLocalFlightUI();
-
     if (db && isHost) {
         db.ref("currentRound/state").set("FLIGHT");
         
@@ -394,7 +406,6 @@ function initGraphEngine() {
 
 function renderClientFrame(currentMultiplier) {
     if (isHost || isCrashed) return; 
-
     let currentX, currentY;
     const cpX = startX + (endX - startX) * 0.45;
     const cpY = startY;
@@ -418,7 +429,6 @@ function renderClientFrame(currentMultiplier) {
         executeLocalCrashSequence(currentX, currentY);
         return;
     }
-
     renderPathsAndPlane(currentX, currentY, currentMultiplier);
 }
 
@@ -444,8 +454,8 @@ function renderPathsAndPlane(cX, cY, cMultiplier) {
 function animateEngine(timestamp) {
     if (isCrashed) return;
     if (!isHost && db) return; 
-
     if (!startTime) startTime = timestamp;
+
     let currentX, currentY;
     let currentMultiplier = 1.00;
     const cpX = startX + (endX - startX) * 0.45;
@@ -507,6 +517,13 @@ function executeLocalCrashSequence(lastX, lastY) {
         } catch (e) {
             console.error("Database sync operation fault:", e);
         }
+    } else if (!db) {
+        // LocalStorage Fallback safe save handler
+        let localHistory = JSON.parse(localStorage.getItem("game_history")) || [];
+        localHistory.push(parseFloat(crashTarget.toFixed(2)));
+        if (localHistory.length > 40) localHistory.shift();
+        localStorage.setItem("game_history", JSON.stringify(localHistory));
+        updateHistoryUI(localHistory);
     }
 
     if (raysBg) raysBg.classList.add("rays-paused");
@@ -524,7 +541,6 @@ function executeLocalCrashSequence(lastX, lastY) {
         planeContainer.style.left = `${width + 180}px`; 
         planeContainer.style.top = `${lastY - 150}px`; 
     }
-
     setTimeout(() => { 
         if (isHost || !db) startMasterLoop(); 
     }, 3000);
