@@ -85,7 +85,6 @@ function updateHistoryUI(historyArray) {
     if (!multiBar) return;
     multiBar.innerHTML = "";
     
-    // 1. Top Bar Slider: Last 15 entries display mechanism
     const recentHistory = historyArray.slice(-15);
     recentHistory.reverse().forEach(val => {
         const multiDiv = document.createElement("div");
@@ -108,7 +107,6 @@ function updateHistoryUI(historyArray) {
         multiBar.appendChild(multiDiv);
     });
 
-    // 2. Expand Grid Panel: Load comprehensive last 32 items matrix layout
     if (dropdownGridContainer) {
         dropdownGridContainer.innerHTML = "";
         const detailedHistory = historyArray.slice(-32); 
@@ -145,25 +143,34 @@ if (db) {
         }
     });
 
-    // DRIVER SEAT CORE LIFECYCLE MANAGEMENT
-    // 1. Host Presence Heartbeat
+    // CRITICAL FIX: Atomic Transaction for Driver Seat Selection
+    function claimHostSeat() {
+        db.ref("currentRound/hostId").transaction((currentHost) => {
+            if (currentHost === null || currentHost === "") {
+                return myUserId; // Seat is empty, take it
+            }
+            return currentHost; // Keep current host
+        }, (error, committed, snapshot) => {
+            if (committed && snapshot.val() === myUserId) {
+                isHost = true;
+                db.ref("currentRound/hostId").onDisconnect().remove();
+            } else {
+                isHost = false;
+            }
+        });
+    }
+
+    // Continuously monitor the host seat safely
     db.ref("currentRound/hostId").on("value", (snap) => {
-        const currentHost = snap.val();
-        if (!currentHost) {
-            // Seizing control if driver seat is vacant
-            db.ref("currentRound/hostId").set(myUserId);
-            isHost = true;
-        } else if (currentHost === myUserId) {
-            isHost = true;
+        const val = snap.val();
+        if (!val) {
+            claimHostSeat();
         } else {
-            isHost = false;
+            isHost = (val === myUserId);
         }
     });
 
-    // Disconnect safety to free driver seat immediately if tab crashes or closes
-    db.ref("currentRound/hostId").onDisconnect().remove();
-
-    // 2. Client Side Listeners for State and Live Updates
+    // Client Side Listeners for State and Live Updates
     db.ref("currentRound/state").on("value", (snap) => {
         const state = snap.val() || "IDLE";
         remoteRoundState = state;
@@ -172,6 +179,14 @@ if (db) {
                 executeLocalTimerUI();
             } else if (state === "FLIGHT") {
                 executeLocalFlightUI();
+            } else if (state === "CRASHED") {
+                if (animationFrameId) cancelAnimationFrame(animationFrameId);
+                isCrashed = true;
+                if (flewAwayLabel) flewAwayLabel.classList.add("show");
+                if (planeContainer) {
+                    planeContainer.style.transition = "left 0.7s cubic-bezier(0.4, 0.0, 0.2, 1), top 0.7s cubic-bezier(0.4, 0.0, 0.2, 1)";
+                    planeContainer.style.left = `${width + 180}px`; 
+                }
             }
         }
     });
@@ -190,7 +205,7 @@ if (db) {
     });
 }
 
-// Toggle Dropdown Sheet Events with State Control
+// Toggle Dropdown Sheet Events
 if (historyDropdownTrigger && dropdownPanel) {
     historyDropdownTrigger.onclick = (e) => {
         e.stopPropagation();
@@ -230,9 +245,7 @@ function removeBlackFromVideo() {
             ctx.putImageData(imageData, 0, 0);
             if (!isGameStartedYet) {
                 isGameStartedYet = true;
-                if (isHost || !db) {
-                    startMasterLoop();
-                }
+                startMasterLoop();
             }
         } catch(e) {
             if (planeCanvas.width > 0 && planeCanvas.height > 0) {
@@ -241,9 +254,7 @@ function removeBlackFromVideo() {
             }
             if (!isGameStartedYet) {
                 isGameStartedYet = true;
-                if (isHost || !db) {
-                    startMasterLoop();
-                }
+                startMasterLoop();
             }
         }
     }
@@ -261,7 +272,7 @@ if (planeVideo) {
             setTimeout(() => {
                 if(!isGameStartedYet) { 
                     isGameStartedYet = true; 
-                    if(isHost || !db) startMasterLoop(); 
+                    startMasterLoop(); 
                 }
             }, 1000);
         });
@@ -290,7 +301,6 @@ function updateCounterColor(multiplier) {
     }
 }
 
-// SHARED TIMER DISPLAY LOGIC WITHOUT COLLISION INTERFERENCE
 function executeLocalTimerUI() {
     if (graphArea) graphArea.style.display = "block"; 
     gameElements.forEach(el => { if (el) el.style.display = ""; });
@@ -316,7 +326,7 @@ function executeLocalTimerUI() {
 }
 
 function startMasterLoop() {
-    if (db && !isHost) return; // Master controller blockade
+    if (db && !isHost) return; 
 
     if (db) db.ref("currentRound/state").set("TIMER");
     executeLocalTimerUI();
@@ -382,7 +392,6 @@ function initGraphEngine() {
     animationFrameId = requestAnimationFrame(animateEngine);
 }
 
-// CLIENT UI DISPATCH RENDERING ENGINE (Calculates coordinate mappings based on exact current multiplier)
 function renderClientFrame(currentMultiplier) {
     if (isHost || isCrashed) return; 
 
@@ -390,7 +399,6 @@ function renderClientFrame(currentMultiplier) {
     const cpX = startX + (endX - startX) * 0.45;
     const cpY = startY;
 
-    // Mapping coordinates backwards securely from multiplier progress bounds
     if (currentMultiplier < 2.06) {
         let progress = Math.pow((currentMultiplier - 1.00) / 1.06, 1 / 1.8);
         if (progress > 1) progress = 1;
@@ -406,7 +414,6 @@ function renderClientFrame(currentMultiplier) {
         currentY = endY + wave1 + wave2;
     }
 
-    // Checking client side safety boundary synchronization
     if (currentMultiplier >= crashTarget) {
         executeLocalCrashSequence(currentX, currentY);
         return;
@@ -415,7 +422,6 @@ function renderClientFrame(currentMultiplier) {
     renderPathsAndPlane(currentX, currentY, currentMultiplier);
 }
 
-// Utility drawing system
 function renderPathsAndPlane(cX, cY, cMultiplier) {
     const cpX = startX + (endX - startX) * 0.45;
     const cpY = startY;
@@ -437,7 +443,7 @@ function renderPathsAndPlane(cX, cY, cMultiplier) {
 
 function animateEngine(timestamp) {
     if (isCrashed) return;
-    if (!isHost && db) return; // Passenger thread blocking
+    if (!isHost && db) return; 
 
     if (!startTime) startTime = timestamp;
     let currentX, currentY;
@@ -487,7 +493,7 @@ function animateEngine(timestamp) {
 function executeLocalCrashSequence(lastX, lastY) {
     window.dispatchEvent(new CustomEvent("gameCrashed"));
     isCrashed = true;
-    cancelAnimationFrame(animationFrameId);
+    if (animationFrameId) cancelAnimationFrame(animationFrameId);
 
     if (db && isHost) {
         try {
@@ -528,7 +534,7 @@ window.onload = () => {
     setTimeout(() => {
         if (!isGameStartedYet) { 
             isGameStartedYet = true; 
-            if (isHost || !db) startMasterLoop(); 
+            startMasterLoop(); 
         }
     }, 2000);
 };
