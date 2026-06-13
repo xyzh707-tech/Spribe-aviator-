@@ -1,6 +1,6 @@
 /* BRIDGE INITIALIZATION & CORE CONTROL */
-
 // Firebase initialization using CDN Globals (No import errors)
+
 const firebaseConfig = {
   apiKey: "AIzaSyCE-bz-QbLpAF4qLqejGHtE3qS8zdQjmAY",
   authDomain: "aviator-b8af3.firebaseapp.com",
@@ -18,6 +18,11 @@ if (typeof firebase !== 'undefined') {
     firebase.initializeApp(firebaseConfig);
     db = firebase.database();
 }
+
+// MULTI-DEVICE DRIVER SEAT ENGINE STATES
+const myUserId = "User_" + Math.floor(Math.random() * 100000);
+let isHost = false; 
+let remoteRoundState = "IDLE"; 
 
 const timerLine = document.getElementById("timerLine");
 const gameElements = document.querySelectorAll(".game-element");
@@ -46,12 +51,6 @@ let isHoldingAtTop = false;
 let holdStartTime = null;
 let animationFrameId = null;
 let isGameStartedYet = false; 
-
-// Multi-User Host and State Synchronization Variables
-let isHost = false;
-let myUserId = Math.random().toString(36).substring(2, 15);
-let serverTimeOffset = 0;
-let lastSyncedState = "";
 
 // Initial default, will be overwritten every round randomly
 let crashTarget = 15.00;
@@ -146,14 +145,49 @@ if (db) {
         }
     });
 
-    // Calculate time offset with Firebase server to fix client mismatches
-    db.ref(".info/serverTimeOffset").on("value", (snap) => {
-        serverTimeOffset = snap.val() || 0;
+    // DRIVER SEAT CORE LIFECYCLE MANAGEMENT
+    // 1. Host Presence Heartbeat
+    db.ref("currentRound/hostId").on("value", (snap) => {
+        const currentHost = snap.val();
+        if (!currentHost) {
+            // Seizing control if driver seat is vacant
+            db.ref("currentRound/hostId").set(myUserId);
+            isHost = true;
+        } else if (currentHost === myUserId) {
+            isHost = true;
+        } else {
+            isHost = false;
+        }
     });
-}
 
-function getServerTime() {
-    return Date.now() + serverTimeOffset;
+    // Disconnect safety to free driver seat immediately if tab crashes or closes
+    db.ref("currentRound/hostId").onDisconnect().remove();
+
+    // 2. Client Side Listeners for State and Live Updates
+    db.ref("currentRound/state").on("value", (snap) => {
+        const state = snap.val() || "IDLE";
+        remoteRoundState = state;
+        if (!isHost) {
+            if (state === "TIMER") {
+                executeLocalTimerUI();
+            } else if (state === "FLIGHT") {
+                executeLocalFlightUI();
+            }
+        }
+    });
+
+    db.ref("currentRound/multiplier").on("value", (snap) => {
+        if (!isHost && remoteRoundState === "FLIGHT") {
+            const remoteMultiplier = parseFloat(snap.val() || 1.00);
+            renderClientFrame(remoteMultiplier);
+        }
+    });
+
+    db.ref("currentRound/crashTarget").on("value", (snap) => {
+        if (!isHost) {
+            crashTarget = parseFloat(snap.val() || 1.00);
+        }
+    });
 }
 
 // Toggle Dropdown Sheet Events with State Control
@@ -196,7 +230,9 @@ function removeBlackFromVideo() {
             ctx.putImageData(imageData, 0, 0);
             if (!isGameStartedYet) {
                 isGameStartedYet = true;
-                initSyncEngine();
+                if (isHost || !db) {
+                    startMasterLoop();
+                }
             }
         } catch(e) {
             if (planeCanvas.width > 0 && planeCanvas.height > 0) {
@@ -205,7 +241,9 @@ function removeBlackFromVideo() {
             }
             if (!isGameStartedYet) {
                 isGameStartedYet = true;
-                initSyncEngine();
+                if (isHost || !db) {
+                    startMasterLoop();
+                }
             }
         }
     }
@@ -221,7 +259,10 @@ if (planeVideo) {
             removeBlackFromVideo();
         }).catch(() => {
             setTimeout(() => {
-                if(!isGameStartedYet) { isGameStartedYet = true; initSyncEngine(); }
+                if(!isGameStartedYet) { 
+                    isGameStartedYet = true; 
+                    if(isHost || !db) startMasterLoop(); 
+                }
             }, 1000);
         });
     });
@@ -249,183 +290,49 @@ function updateCounterColor(multiplier) {
     }
 }
 
-// Core Realtime Sync Engine (Handles Host management, Auto-Pause & Resume)
-function initSyncEngine() {
-    if (!db) return;
-    const engineRef = db.ref("gameState");
-    const hostRef = db.ref("gameHost");
-
-    // Presence management: Add player to active users and handle sudden window disconnects cleanly
-    const userPresenceRef = db.ref("activePlayers/" + myUserId);
-    userPresenceRef.set(true);
-    userPresenceRef.onDisconnect().remove();
-
-    // Monitor engine status continuously
-    hostRef.on("value", (snap) => {
-        let currentHost = snap.val();
-        if (!currentHost) {
-            // Check if there are players online to resume or claim the vacant slot
-            db.ref("activePlayers").once("value", (playersSnap) => {
-                if (playersSnap.exists()) {
-                    let players = Object.keys(playersSnap.val());
-                    if (players[0] === myUserId) {
-                        hostRef.set(myUserId);
-                    }
-                } else {
-                    // Bypass freeze safe check if DB node is freshly created
-                    hostRef.set(myUserId);
-                }
-            });
-        } else if (currentHost === myUserId) {
-            isHost = true;
-        } else {
-            isHost = false;
-        }
-    });
-
-    // Backup listener to re-claim hosting if current driver crashes unexpectedly
-    hostRef.onDisconnect().remove();
-
-    // Listen to unified structural changes across all synchronized client nodes
-    engineRef.on("value", (snap) => {
-        let state = snap.val();
-        if (!state) {
-            if (isHost) resetEngineToTimer();
-            return;
-        }
-
-        // MODIFIED SAFELY: Abort engine freeze logic if node is temporarily empty or single local tester
-        db.ref("activePlayers").on("value", (playersSnap) => {
-            if (!playersSnap.exists() && !isHost) {
-                // Safely falls back instead of freezing completely
-                cancelAnimationFrame(animationFrameId);
-                return;
-            }
-        });
-
-        crashTarget = state.crashTarget || 1.50;
-        let serverNow = getServerTime();
-
-        if (state.status === "TIMER") {
-            if (lastSyncedState !== "TIMER_" + state.startTime) {
-                lastSyncedState = "TIMER_" + state.startTime;
-                renderTimerUI(state.startTime, serverNow);
-            }
-        } else if (state.status === "FLIGHT") {
-            if (lastSyncedState !== "FLIGHT_" + state.startTime) {
-                lastSyncedState = "FLIGHT_" + state.startTime;
-                renderFlightUI(state.startTime);
-            }
-        } else if (state.status === "CRASHED") {
-            if (lastSyncedState !== "CRASHED_" + state.timestamp) {
-                lastSyncedState = "CRASHED_" + state.timestamp;
-                renderCrashUI(state.lastX, state.lastY);
-            }
-        }
-    });
-}
-
-// Host command structures to advance game cycles uniformly
-function resetEngineToTimer() {
-    if (!isHost || !db) return;
-    
-    let now = getServerTime();
-    
-    // Feature 1: Synchronized increment logic safely transactional
-    db.ref("currentRound/period").transaction((currentPeriod) => {
-        return currentPeriod === null ? 11111111 : parseInt(currentPeriod) + 1;
-    });
-
-    // Feature 2: Fetch administrative preset overrides before committing targets
-    db.ref("currentRound/adminOverride").once("value", (snap) => {
-        let overrideData = snap.val();
-        let selectedTarget = (overrideData && overrideData.active === true) ? parseFloat(overrideData.target) : generateRandomCrashTarget();
-        
-        db.ref("currentRound/crashTarget").set(parseFloat(selectedTarget.toFixed(2)));
-        db.ref("gameState").set({
-            status: "TIMER",
-            startTime: now,
-            crashTarget: selectedTarget
-        });
-    });
-}
-
-function startEngineFlight() {
-    if (!isHost || !db) return;
-    db.ref("gameState").set({
-        status: "FLIGHT",
-        startTime: getServerTime(),
-        crashTarget: crashTarget
-    });
-}
-
-function commitEngineCrash(finalX, finalY) {
-    if (!isHost || !db) return;
-    
-    db.ref('history').push(parseFloat(crashTarget.toFixed(2)));
-    db.ref("currentRound/adminOverride").set({
-        active: false,
-        target: "2.00",
-        timestamp: firebase.database.ServerValue.TIMESTAMP
-    });
-
-    db.ref("gameState").set({
-        status: "CRASHED",
-        timestamp: getServerTime(),
-        lastX: finalX,
-        lastY: finalY,
-        crashTarget: crashTarget
-    });
-}
-
-// Pure visual renders calculated exactly down to server offset metrics
-function renderTimerUI(stateStart, serverNow) {
-    cancelAnimationFrame(animationFrameId);
-    if (graphArea) graphArea.style.display = "block";
+// SHARED TIMER DISPLAY LOGIC WITHOUT COLLISION INTERFERENCE
+function executeLocalTimerUI() {
+    if (graphArea) graphArea.style.display = "block"; 
     gameElements.forEach(el => { if (el) el.style.display = ""; });
-    if (counter) counter.style.display = "none";
+    if (counter) counter.style.display = "none"; 
     if (flewAwayLabel) flewAwayLabel.classList.remove("show");
-
+    
     if (trailPath) { trailPath.removeAttribute("d"); trailPath.style.opacity = "0"; }
     if (glowAreaPath) { glowAreaPath.removeAttribute("d"); glowAreaPath.style.opacity = "0"; }
     if (raysBg) { raysBg.classList.add("rays-paused"); raysBg.style.filter = "none"; }
-
+    
     if (planeContainer) {
-        planeContainer.style.transition = "none";
+        planeContainer.style.transition = "none"; 
         planeContainer.style.display = "block";
         planeContainer.style.left = `${startX - tailOffsetX}px`;
         planeContainer.style.top = `${startY - tailOffsetY}px`;
     }
-
-    let elapsed = serverNow - stateStart;
-    let remaining = 10000 - elapsed;
-
+    
     if (timerLine) {
         timerLine.classList.remove("timer-active");
-        void timerLine.offsetWidth;
-        timerLine.style.animationDuration = "10s";
+        void timerLine.offsetWidth; 
         timerLine.classList.add("timer-active");
-        // Keep animation aligned if user loaded page mid-way
-        timerLine.style.animationDelay = `-${elapsed / 1000}s`;
-    }
-
-    window.dispatchEvent(new CustomEvent("gameRoundStarted"));
-    if (isHost) {
-        setTimeout(() => { startEngineFlight(); }, Math.max(0, remaining));
     }
 }
 
-// Visual render loop implementation 
-function renderFlightUI(stateStart) {
-    cancelAnimationFrame(animationFrameId);
-    gameElements.forEach(el => { if (el) el.style.display = "none"; });
-    if (counter) counter.style.display = "block";
+function startMasterLoop() {
+    if (db && !isHost) return; // Master controller blockade
 
-    startTime = stateStart;
-    isCrashed = false; 
-    isHoldingAtTop = false; 
-    holdStartTime = null;
+    if (db) db.ref("currentRound/state").set("TIMER");
+    executeLocalTimerUI();
 
+    setTimeout(() => {
+        if (db && !isHost) return; 
+        initGraphEngine();
+    }, 10000); 
+}
+
+function executeLocalFlightUI() {
+    gameElements.forEach(el => { if (el) el.style.display = "none"; }); 
+    if (counter) counter.style.display = "block"; 
+
+    startTime = null; isCrashed = false; isHoldingAtTop = false; holdStartTime = null;
+    
     if (graphArea) graphArea.style.setProperty('background', '#000000', 'important');
     if (counter) {
         counter.style.color = "#ffffff";
@@ -437,22 +344,164 @@ function renderFlightUI(stateStart) {
     if (raysBg) { raysBg.classList.remove("rays-paused"); raysBg.style.filter = "none"; }
     if (trailPath) { trailPath.setAttribute("d", ""); trailPath.style.opacity = "1"; }
     if (glowAreaPath) { glowAreaPath.setAttribute("d", ""); glowAreaPath.style.opacity = "1"; }
-
     if (planeContainer) {
         planeContainer.style.transition = "none";
         planeContainer.style.display = "block";
         planeContainer.style.left = `${startX - tailOffsetX}px`;
         planeContainer.style.top = `${startY - tailOffsetY}px`;
     }
+    window.dispatchEvent(new CustomEvent("gameRoundStarted"));
+}
 
-    db.ref("currentRound/multiplier").set(1.00);
+function initGraphEngine() {
+    executeLocalFlightUI();
+
+    if (db && isHost) {
+        db.ref("currentRound/state").set("FLIGHT");
+        
+        db.ref("currentRound/period").transaction((currentPeriod) => {
+            if (currentPeriod === null) return 11111111;
+            return parseInt(currentPeriod) + 1;
+        });
+        
+        db.ref("currentRound/adminOverride").once("value", (snap) => {
+            let overrideData = snap.val();
+            if (overrideData && overrideData.active === true) {
+                crashTarget = parseFloat(overrideData.target);
+            } else {
+                crashTarget = generateRandomCrashTarget();
+            }
+            db.ref("currentRound/crashTarget").set(parseFloat(crashTarget.toFixed(2)));
+        });
+        
+        db.ref("currentRound/multiplier").set(1.00);
+    } else if (!db) {
+        crashTarget = generateRandomCrashTarget();
+    }
+    
     animationFrameId = requestAnimationFrame(animateEngine);
 }
 
-function renderCrashUI(lastX, lastY) {
+// CLIENT UI DISPATCH RENDERING ENGINE (Calculates coordinate mappings based on exact current multiplier)
+function renderClientFrame(currentMultiplier) {
+    if (isHost || isCrashed) return; 
+
+    let currentX, currentY;
+    const cpX = startX + (endX - startX) * 0.45;
+    const cpY = startY;
+
+    // Mapping coordinates backwards securely from multiplier progress bounds
+    if (currentMultiplier < 2.06) {
+        let progress = Math.pow((currentMultiplier - 1.00) / 1.06, 1 / 1.8);
+        if (progress > 1) progress = 1;
+        let smoothProgress = Math.sin(progress * Math.PI / 2);
+        currentX = (1 - smoothProgress) * (1 - smoothProgress) * startX + 2 * (1 - smoothProgress) * smoothProgress * cpX + smoothProgress * smoothProgress * endX;
+        currentY = (1 - smoothProgress) * (1 - smoothProgress) * startY + 2 * (1 - smoothProgress) * smoothProgress * cpY + smoothProgress * smoothProgress * endY;
+        let takeoffFloat = Math.sin(performance.now() * 0.005) * 1.2;
+        currentY += takeoffFloat * progress;
+    } else {
+        currentX = endX;
+        let wave1 = Math.sin(performance.now() * 0.0025) * 14.5;
+        let wave2 = Math.cos(performance.now() * 0.005) * 3.5;
+        currentY = endY + wave1 + wave2;
+    }
+
+    // Checking client side safety boundary synchronization
+    if (currentMultiplier >= crashTarget) {
+        executeLocalCrashSequence(currentX, currentY);
+        return;
+    }
+
+    renderPathsAndPlane(currentX, currentY, currentMultiplier);
+}
+
+// Utility drawing system
+function renderPathsAndPlane(cX, cY, cMultiplier) {
+    const cpX = startX + (endX - startX) * 0.45;
+    const cpY = startY;
+    let pathData = `M ${startX} ${startY} Q ${cpX} ${cpY} ${cX} ${cY}`;
+    
+    if (trailPath) trailPath.setAttribute("d", pathData);
+    let glowData = `${pathData} L ${cX} ${startY} Z`;
+    if (glowAreaPath) glowAreaPath.setAttribute("d", glowData);
+    if (planeContainer) {
+        planeContainer.style.left = `${cX - tailOffsetX}px`;
+        planeContainer.style.top = `${cY - tailOffsetY}px`;
+    }
+    if (counter) {
+        counter.innerText = `${cMultiplier.toFixed(2)}x`;
+        updateCounterColor(cMultiplier);
+    }
+    window.dispatchEvent(new CustomEvent("multiplierUpdate", { detail: { multiplier: cMultiplier } }));
+}
+
+function animateEngine(timestamp) {
+    if (isCrashed) return;
+    if (!isHost && db) return; // Passenger thread blocking
+
+    if (!startTime) startTime = timestamp;
+    let currentX, currentY;
+    let currentMultiplier = 1.00;
+    const cpX = startX + (endX - startX) * 0.45;
+    const cpY = startY;
+    
+    if (!isHoldingAtTop) {
+        let elapsed = timestamp - startTime;
+        let progress = elapsed / flyToTopDuration;
+        if (progress > 1) progress = 1;
+        let smoothProgress = Math.sin(progress * Math.PI / 2);
+        currentX = (1 - smoothProgress) * (1 - smoothProgress) * startX + 2 * (1 - smoothProgress) * smoothProgress * cpX + smoothProgress * smoothProgress * endX;
+        currentY = (1 - smoothProgress) * (1 - smoothProgress) * startY + 2 * (1 - smoothProgress) * smoothProgress * cpY + smoothProgress * smoothProgress * endY;
+        let takeoffFloat = Math.sin(timestamp * 0.005) * 1.2;
+        currentY += takeoffFloat * progress;
+        currentMultiplier = 1.00 + (Math.pow(progress, 1.8) * 1.06);
+        
+        if (currentMultiplier >= crashTarget) {
+            currentMultiplier = crashTarget;
+            executeLocalCrashSequence(currentX, currentY);
+            return;
+        }
+        if (progress >= 1) { isHoldingAtTop = true; holdStartTime = timestamp; }
+    } else {
+        let holdElapsed = timestamp - holdStartTime;
+        currentX = endX;
+        let wave1 = Math.sin(timestamp * 0.0025) * 14.5;
+        let wave2 = Math.cos(timestamp * 0.005) * 3.5;
+        currentY = endY + wave1 + wave2;
+        currentMultiplier = 2.06 + Math.pow(holdElapsed / 6500, 1.5) * (crashTarget - 2.06);
+        if (currentMultiplier >= crashTarget) {
+            currentMultiplier = crashTarget;
+            executeLocalCrashSequence(currentX, currentY);
+            return;
+        }
+    }
+    
+    renderPathsAndPlane(currentX, currentY, currentMultiplier);
+    
+    if (db && isHost) {
+        db.ref("currentRound/multiplier").set(parseFloat(currentMultiplier.toFixed(2)));
+    }
+    animationFrameId = requestAnimationFrame(animateEngine);
+}
+
+function executeLocalCrashSequence(lastX, lastY) {
     window.dispatchEvent(new CustomEvent("gameCrashed"));
     isCrashed = true;
     cancelAnimationFrame(animationFrameId);
+
+    if (db && isHost) {
+        try {
+            db.ref('history').push(parseFloat(crashTarget.toFixed(2)));
+            db.ref("currentRound/state").set("CRASHED");
+            db.ref("currentRound/adminOverride").set({
+                active: false,
+                target: "2.00",
+                timestamp: firebase.database.ServerValue.TIMESTAMP
+            });
+        } catch (e) {
+            console.error("Database sync operation fault:", e);
+        }
+    }
 
     if (raysBg) raysBg.classList.add("rays-paused");
     if (flewAwayLabel) flewAwayLabel.classList.add("show");
@@ -464,105 +513,25 @@ function renderCrashUI(lastX, lastY) {
     }
     if (trailPath) trailPath.style.opacity = "0";
     if (glowAreaPath) glowAreaPath.style.opacity = "0";
-
     if (planeContainer) {
         planeContainer.style.transition = "left 0.7s cubic-bezier(0.4, 0.0, 0.2, 1), top 0.7s cubic-bezier(0.4, 0.0, 0.2, 1)";
-        planeContainer.style.left = `${width + 180}px`;
-        planeContainer.style.top = `${lastY - 150}px`;
+        planeContainer.style.left = `${width + 180}px`; 
+        planeContainer.style.top = `${lastY - 150}px`; 
     }
 
-    if (isHost) {
-        setTimeout(() => { resetEngineToTimer(); }, 3000);
-    }
+    setTimeout(() => { 
+        if (isHost || !db) startMasterLoop(); 
+    }, 3000);
 }
 
-function animateEngine() {
-    if (isCrashed) return;
-    
-    let timestamp = getServerTime();
-    let currentX, currentY;
-    let currentMultiplier = 1.00;
-    const cpX = startX + (endX - startX) * 0.45;
-    const cpY = startY;
-    
-    let elapsed = timestamp - startTime;
-
-    if (elapsed < flyToTopDuration) {
-        let progress = elapsed / flyToTopDuration;
-        let smoothProgress = Math.sin(progress * Math.PI / 2);
-        currentX = (1 - smoothProgress) * (1 - smoothProgress) * startX + 2 * (1 - smoothProgress) * smoothProgress * cpX + smoothProgress * smoothProgress * endX;
-        currentY = (1 - smoothProgress) * (1 - smoothProgress) * startY + 2 * (1 - smoothProgress) * smoothProgress * cpY + smoothProgress * smoothProgress * endY;
-        let takeoffFloat = Math.sin(timestamp * 0.005) * 1.2;
-        currentY += takeoffFloat * progress;
-        currentMultiplier = 1.00 + (Math.pow(progress, 1.8) * 1.06);
-        
-        if (currentMultiplier >= crashTarget) {
-            currentMultiplier = crashTarget;
-            if (counter) counter.innerText = `${crashTarget.toFixed(2)}x`;
-            if (isHost) commitEngineCrash(currentX, currentY);
-            return;
-        }
-    } else {
-        isHoldingAtTop = true;
-        let holdElapsed = elapsed - flyToTopDuration;
-        currentX = endX;
-        let wave1 = Math.sin(timestamp * 0.0025) * 14.5;
-        let wave2 = Math.cos(timestamp * 0.005) * 3.5;
-        currentY = endY + wave1 + wave2;
-        currentMultiplier = 2.06 + Math.pow(holdElapsed / 6500, 1.5) * (crashTarget - 2.06);
-        
-        if (currentMultiplier >= crashTarget) {
-            currentMultiplier = crashTarget;
-            if (counter) counter.innerText = `${crashTarget.toFixed(2)}x`;
-            if (isHost) commitEngineCrash(currentX, currentY);
-            return;
-        }
-    }
-    
-    let pathData = "";
-    if (elapsed > 60) {
-        pathData = `M ${startX} ${startY} Q ${cpX} ${cpY} ${currentX} ${currentY}`;
-    }
-    if (trailPath) trailPath.setAttribute("d", pathData);
-    let glowData = pathData ? `${pathData} L ${currentX} ${startY} Z` : "";
-    if (glowAreaPath) glowAreaPath.setAttribute("d", glowData);
-    if (planeContainer) {
-        planeContainer.style.left = `${currentX - tailOffsetX}px`;
-        planeContainer.style.top = `${currentY - tailOffsetY}px`;
-    }
-    if (counter) {
-        counter.innerText = `${currentMultiplier.toFixed(2)}x`;
-        updateCounterColor(currentMultiplier);
-    }
-    
-    if (db && isHost) {
-        db.ref("currentRound/multiplier").set(parseFloat(currentMultiplier.toFixed(2)));
-    }
-    window.dispatchEvent(new CustomEvent("multiplierUpdate", { detail: { multiplier: currentMultiplier } }));
-    animationFrameId = requestAnimationFrame(animateEngine);
-}
-
-// FIXED: Android Chrome standard bypass for Autoplay lock
 window.onload = () => {
     setTimeout(() => {
         if (!isGameStartedYet) { 
-            console.log("GitHub Mobile Status: Forcing Sync Engine...");
             isGameStartedYet = true; 
-            initSyncEngine(); 
+            if (isHost || !db) startMasterLoop(); 
         }
-    }, 1500);
+    }, 2000);
 };
-
-// Pure dynamic interface interaction trigger to unlock audio/video restrictions
-document.addEventListener("click", () => {
-    if (!isGameStartedYet) {
-        isGameStartedYet = true;
-        initSyncEngine();
-    }
-    if (planeVideo && planeVideo.paused) {
-        planeVideo.play().catch(e => console.log("Video setup handled gracefully."));
-    }
-}, { once: true });
 
 /* TABS & INPUT LOGIC CONTROL */
 document.querySelectorAll(".switch").forEach(sw=>{
