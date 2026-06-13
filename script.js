@@ -48,6 +48,11 @@ let holdStartTime = null;
 let animationFrameId = null;
 let isGameStartedYet = false; 
 
+// BACKGROUND DETONATION PROTECTION VARIABLES
+let isTabPaused = false;
+let totalPausedDuration = 0;
+let lastPauseTimestamp = 0;
+
 let crashTarget = 15.00;
 const flyToTopDuration = 4000; 
 
@@ -180,7 +185,7 @@ if (db) {
     });
 
     db.ref("currentRound/multiplier").on("value", (snap) => {
-        if (!isHost && remoteRoundState === "FLIGHT") {
+        if (!isHost && remoteRoundState === "FLIGHT" && !isTabPaused) {
             const remoteMultiplier = parseFloat(snap.val() || 1.00);
             renderClientFrame(remoteMultiplier);
         }
@@ -196,46 +201,57 @@ if (db) {
     updateHistoryUI(localHistory);
 }
 
-/* ANTI-PAUSE & BACKGROUND RECOVERY API (Tab minimize aur lock screen ka pakka ilaj) */
+/* ANTI-PAUSE: BACKGROUND SYNC & AUTO CONTINUATION ENGINE */
 document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible") {
-        console.log("Tab Active Detected! Syncing core engines...");
+    if (document.visibilityState === "hidden") {
+        // Jab tum lock karke jaoge - Time record karo aur engine pause karo
+        isTabPaused = true;
+        lastPauseTimestamp = performance.now();
+        if (planeVideo) planeVideo.pause();
+    } else if (document.visibilityState === "visible") {
+        // Jab tum wapas aagaye - Pause duration nikal kar system ko offset do
+        isTabPaused = false;
+        if (planeVideo) planeVideo.play().catch(()=>{});
         
-        // Purani bhatki hui saari animations ko clear karo
-        if (animationFrameId) cancelAnimationFrame(animationFrameId);
-        startTime = null; 
-        holdStartTime = null;
-        isHoldingAtTop = false;
+        if (lastPauseTimestamp > 0) {
+            let currentRecoveryTime = performance.now();
+            let dynamicDiff = currentRecoveryTime - lastPauseTimestamp;
+            totalPausedDuration += dynamicDiff; 
+        }
 
-        if (db) {
-            // Agar database online hai, toh Firebase se live state wapas fetch karo aur sync karo
+        console.log("Welcome back! Recovered pause drift of: " + totalPausedDuration + "ms");
+
+        if (!db) {
+            // Offline Mode (Bina Firebase ke loop automatically safely continue hoga)
+            if (animationFrameId) cancelAnimationFrame(animationFrameId);
+            animationFrameId = requestAnimationFrame(animateEngine);
+        } else {
+            // Online Mode (Firebase state se re-sync)
             db.ref("currentRound/state").once("value", (snap) => {
                 const liveState = snap.val() || "IDLE";
-                remoteRoundState = liveState;
                 if (liveState === "FLIGHT") {
-                    executeLocalFlightUI();
-                } else {
+                    if (animationFrameId) cancelAnimationFrame(animationFrameId);
+                    animationFrameId = requestAnimationFrame(animateEngine);
+                } else if (liveState === "TIMER" || liveState === "CRASHED") {
+                    totalPausedDuration = 0;
+                    startTime = null;
                     if (isHost) startMasterLoop();
                 }
             });
-        } else {
-            // Offline mode mein bina ruke system ko fresh loop par daal do taaki freeze na ho
-            isCrashed = false;
-            remoteRoundState = "IDLE";
-            startMasterLoop();
         }
     }
 });
 
-/* BACKGROUND FORCE RESET LOCK */
+/* RECOVERY FORCE LOCKS */
 setInterval(() => {
-    if (isCrashed || remoteRoundState === "CRASHED") {
+    if ((isCrashed || remoteRoundState === "CRASHED") && !isTabPaused) {
         isCrashed = false;
         remoteRoundState = "IDLE";
+        totalPausedDuration = 0;
         if (animationFrameId) cancelAnimationFrame(animationFrameId);
         if (isHost || !db) startMasterLoop();
     }
-}, 8000);
+}, 7000);
 
 if (historyDropdownTrigger && dropdownPanel) {
     historyDropdownTrigger.onclick = (e) => {
@@ -257,10 +273,10 @@ document.addEventListener("click", (e) => {
     }
 });
 
-/* TAINT-SAFE CHROMATIC ENGINE */
+/* CHROMATIC TAINT-FREE RENDERER */
 let chromaInterval = null;
 function removeBlackFromVideo() {
-    if (!planeVideo || !planeCanvas || !ctx || planeVideo.paused || planeVideo.ended) return;
+    if (!planeVideo || !planeCanvas || !ctx || planeVideo.paused || planeVideo.ended || isTabPaused) return;
     try {
         if (planeVideo.videoWidth > 0 && planeCanvas.width !== planeVideo.videoWidth) {
             planeCanvas.width = planeVideo.videoWidth;
@@ -275,9 +291,7 @@ function removeBlackFromVideo() {
             }
         }
         ctx.putImageData(imageData, 0, 0);
-    } catch(e) {
-        // Silent catch for CORS/Taint errors on GitHub Pages
-    }
+    } catch(e) {}
 }
 
 if (planeVideo) {
@@ -369,6 +383,7 @@ function executeLocalFlightUI() {
     isCrashed = false; 
     isHoldingAtTop = false; 
     holdStartTime = null;
+    totalPausedDuration = 0; // Fresh reset for loop metrics
     
     if (graphArea) graphArea.style.setProperty('background', '#000000', 'important');
     if (counter) {
@@ -421,7 +436,7 @@ function initGraphEngine() {
 }
 
 function renderClientFrame(currentMultiplier) {
-    if (isHost || isCrashed) return; 
+    if (isHost || isCrashed || isTabPaused) return; 
     let currentX, currentY;
     const cpX = startX + (endX - startX) * 0.45;
     const cpY = startY;
@@ -468,10 +483,14 @@ function renderPathsAndPlane(cX, cY, cMultiplier) {
 }
 
 function animateEngine(timestamp) {
-    if (isCrashed) return;
+    if (isCrashed || isTabPaused) return;
     if (!isHost && db) return; 
     
     if (!startTime) startTime = timestamp;
+
+    // Core Calculation with dynamic subtracted totalPausedDuration offset
+    let elapsed = timestamp - startTime - totalPausedDuration;
+    if (elapsed < 0) elapsed = 0; 
 
     let currentX, currentY;
     let currentMultiplier = 1.00;
@@ -479,7 +498,6 @@ function animateEngine(timestamp) {
     const cpY = startY;
     
     if (!isHoldingAtTop) {
-        let elapsed = timestamp - startTime;
         let progress = elapsed / flyToTopDuration;
         if (progress > 1) progress = 1;
         let smoothProgress = Math.sin(progress * Math.PI / 2);
@@ -496,7 +514,9 @@ function animateEngine(timestamp) {
         }
         if (progress >= 1) { isHoldingAtTop = true; holdStartTime = timestamp; }
     } else {
-        let holdElapsed = timestamp - holdStartTime;
+        let holdElapsed = timestamp - holdStartTime - totalPausedDuration;
+        if (holdElapsed < 0) holdElapsed = 0;
+
         currentX = endX;
         let wave1 = Math.sin(timestamp * 0.0025) * 14.5;
         let wave2 = Math.cos(timestamp * 0.005) * 3.5;
@@ -533,7 +553,7 @@ function executeLocalCrashSequence(lastX, lastY) {
                 timestamp: firebase.database.ServerValue.TIMESTAMP
             });
         } catch (e) {
-            console.error("Database fault sync:", e);
+            console.error("Database connection recovery dynamic fault:", e);
         }
     } else if (!db) {
         let localHistory = JSON.parse(localStorage.getItem("game_history")) || [];
@@ -559,7 +579,7 @@ function executeLocalCrashSequence(lastX, lastY) {
         planeContainer.style.top = `${lastY - 150}px`; 
     }
     setTimeout(() => { 
-        if (isHost || !db) startMasterLoop(); 
+        if ((isHost || !db) && !isTabPaused) startMasterLoop(); 
     }, 3000);
 }
 
