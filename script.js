@@ -1,8 +1,8 @@
 /* ============================================================
-   COMPLETE SCRIPT.JS (Timer + Server Sync Fixed)
+   FINAL SCRIPT.JS - SERVER SYNC + TIMER (Sab phones same)
    ============================================================ */
 
-// ----- Firebase Setup (Same) -----
+// ----- Firebase Setup -----
 const firebaseConfig = {
   apiKey: "AIzaSyCE-bz-QbLpAF4qLqejGHtE3qS8zdQjmAY",
   authDomain: "aviator-b8af3.firebaseapp.com",
@@ -47,11 +47,13 @@ let isCrashed = false;
 let animationFrameId = null;
 let isGameStartedYet = false;
 let serverRoundActive = false;
-let serverStartTime = null; // Server se aaya future timestamp
-let isGamePlayActive = false; // Timer khatam hone ke baad true hoga
+let serverStartTime = null;
+let isGamePlayActive = false;
 let timerTimeoutId = null;
+let holdStartTime = null;
+let isHoldingAtTop = false;
 
-// ----- Geometry (Same) -----
+// ----- Geometry -----
 const width = 460;
 const height = 250;
 const startX = 35;
@@ -62,8 +64,9 @@ const tailOffsetX = 4;
 const tailOffsetY = 42;
 const cpX = startX + (endX - startX) * 0.45;
 const cpY = startY;
+const flyToTopDuration = 4000;
 
-// ----- Helpers (Same) -----
+// ----- Helpers -----
 function getProgressFromMultiplier(multiplier, crash) {
     if (crash <= 1.0) return 0;
     const ratio = (multiplier - 1) / (crash - 1);
@@ -81,7 +84,7 @@ function getPlanePosition(progress) {
     return { x, y };
 }
 
-// ----- History (Unchanged) -----
+// ----- History -----
 function updateHistoryUI(historyArray) {
     if (!multiBar) return;
     multiBar.innerHTML = "";
@@ -124,7 +127,7 @@ if (db) {
     });
 }
 
-// ----- Dropdown (Unchanged) -----
+// ----- Dropdown -----
 if (historyDropdownTrigger && dropdownPanel) {
     historyDropdownTrigger.onclick = (e) => {
         e.stopPropagation();
@@ -143,7 +146,7 @@ document.addEventListener("click", (e) => {
     }
 });
 
-// ----- Video Filter (Unchanged) -----
+// ----- Video Filter -----
 function removeBlackFromVideo() {
     if (planeVideo && planeCanvas && ctx && planeVideo.readyState >= 2) {
         try {
@@ -174,7 +177,7 @@ if (planeVideo) {
     });
 }
 
-// ----- Color Update (Same) -----
+// ----- Color Update -----
 function updateCounterColor(multiplier) {
     if (isCrashed || !counter || !graphArea || !lightBeam || !raysBg) return;
     counter.style.color = "#ffffff";
@@ -197,12 +200,14 @@ function updateCounterColor(multiplier) {
     }
 }
 
-// ===================== GAME FUNCTIONS (FIXED) =====================
+// ===================== GAME FUNCTIONS =====================
 
 function resetGameUI() {
     isCrashed = false;
     serverRoundActive = false;
     isGamePlayActive = false;
+    isHoldingAtTop = false;
+    holdStartTime = null;
     if (timerTimeoutId) { clearTimeout(timerTimeoutId); timerTimeoutId = null; }
     if (animationFrameId) cancelAnimationFrame(animationFrameId);
 
@@ -216,7 +221,7 @@ function resetGameUI() {
         counter.innerText = "1.00x";
         counter.style.color = "#ffffff";
         counter.style.textShadow = "none";
-        counter.style.display = "block"; // Ensure it's visible later
+        counter.style.display = "block";
     }
     if (flewAwayLabel) flewAwayLabel.classList.remove("show");
     if (trailPath) { trailPath.setAttribute("d", ""); trailPath.style.opacity = "1"; }
@@ -229,7 +234,6 @@ function resetGameUI() {
 }
 
 function startMasterLoop() {
-    // Timer UI dikhao
     if (graphArea) graphArea.style.display = "block";
     gameElements.forEach(el => { if (el) el.style.display = ""; });
     if (counter) counter.style.display = "none";
@@ -249,36 +253,23 @@ function startMasterLoop() {
         timerLine.classList.add("timer-active");
     }
 
-    // 🔥 Timer khatam hone par game activate karo
     const now = Date.now();
-    const delay = Math.max(0, serverStartTime - now); // serverStartTime future mein hai
+    const delay = Math.max(0, serverStartTime - now);
 
     if (timerTimeoutId) clearTimeout(timerTimeoutId);
     timerTimeoutId = setTimeout(() => {
-        // Timer khatam -> Game shuru
-        activateGamePlay();
+        if (isCrashed) return;
+        isGamePlayActive = true;
+        gameElements.forEach(el => { if (el) el.style.display = "none"; });
+        if (counter) counter.style.display = "block";
+        if (graphArea) graphArea.style.setProperty('background', '#000000', 'important');
+        updatePlaneAndCounter(currentMultiplier);
+        window.dispatchEvent(new CustomEvent("gameRoundStarted"));
     }, delay);
 }
 
-function activateGamePlay() {
-    if (isCrashed) return;
-    isGamePlayActive = true;
-    // Timer elements hide karo, Counter dikhao
-    gameElements.forEach(el => { if (el) el.style.display = "none"; });
-    if (counter) counter.style.display = "block";
-    if (graphArea) graphArea.style.setProperty('background', '#000000', 'important');
-    
-    // Jo multiplier server ne bheja hai (1.00 se start hoga), usko apply karo
-    updatePlaneAndCounter(currentMultiplier);
-    
-    // Dispatch event
-    window.dispatchEvent(new CustomEvent("gameRoundStarted", { detail: { multiplier: currentMultiplier } }));
-}
-
 function updatePlaneAndCounter(multiplier) {
-    // Sirf tabhi chalega jab game active hai aur crash nahi hua
     if (isCrashed || !isGamePlayActive) return;
-    
     currentMultiplier = multiplier;
     if (counter) {
         counter.innerText = `${multiplier.toFixed(2)}x`;
@@ -340,49 +331,38 @@ function triggerCrashSequence(crashMultiplier) {
         } catch(e) {}
     }
 
-    window.dispatchEvent(new CustomEvent("gameCrashed", { detail: { multiplier: crashMultiplier } }));
-
-    // 3 sec baad reset (server naya round bhejega)
-    setTimeout(() => {
-        resetGameUI();
-    }, 3000);
+    window.dispatchEvent(new CustomEvent("gameCrashed"));
+    setTimeout(() => { resetGameUI(); }, 3000);
 }
 
 // ===================== SOCKET.IO =====================
 let socket = null;
 
 function connectSocket() {
-    const SERVER_URL = 'https://spribe-aviator.onrender.com'; // Apna Render URL
+    const SERVER_URL = 'https://spribe-aviator.onrender.com';
     socket = io(SERVER_URL);
 
     socket.on('connect', () => {
-        console.log('✅ Connected to game server');
+        console.log('✅ Connected');
     });
 
     socket.on('round-start', (data) => {
-        console.log('🛫 New round scheduled:', data);
         resetGameUI();
         crashTarget = data.crashTarget;
-        serverStartTime = data.startTime; // Future timestamp
+        serverStartTime = data.startTime;
         serverRoundActive = true;
         currentMultiplier = 1.00;
         isGamePlayActive = false;
-        
-        // Timer shuru karo
         startMasterLoop();
-        
-        // Firebase update (optional)
         if (db) {
             db.ref("currentRound/period").transaction((current) => {
                 return current ? parseInt(current) + 1 : 11111111;
             });
             db.ref("currentRound/crashTarget").set(parseFloat(crashTarget.toFixed(2)));
         }
-        window.dispatchEvent(new CustomEvent("gameRoundStarted", { detail: data }));
     });
 
     socket.on('multiplier-update', (data) => {
-        // Update store karo, par apply sirf tab hoga jab game active hai (timer khatam)
         currentMultiplier = data.multiplier;
         if (!isCrashed && isGamePlayActive) {
             updatePlaneAndCounter(data.multiplier);
@@ -390,29 +370,24 @@ function connectSocket() {
     });
 
     socket.on('round-crash', (data) => {
-        console.log('💥 Crash from server:', data);
         if (!isCrashed) {
             triggerCrashSequence(data.crashMultiplier);
         }
     });
 
     socket.on('disconnect', () => {
-        console.log('❌ Disconnected, reconnecting...');
         setTimeout(connectSocket, 2000);
     });
 }
 
-// ----- Start Game -----
+// ----- Start -----
 window.onload = () => {
     removeBlackFromVideo();
     connectSocket();
     resetGameUI();
 };
 
-// ========== BET & TABS (Bilkul Pehle Jaisa, Kuch Nahi Badala) ==========
-// [Yahan tera original bet cards aur tabs ka code aayega]
-// Main neeche sirf reference ke liye daal raha hoon, lekin tu apna wala copy kar sakta hai.
-
+// ========== BET & TABS ==========
 document.querySelectorAll(".switch").forEach(sw => {
     const buttons = sw.querySelectorAll(".switch-btn");
     buttons.forEach(btn => {
