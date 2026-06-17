@@ -2,10 +2,16 @@ const express = require('express');
 const http = require('http');
 const socketIo = require('socket.io');
 const cors = require('cors');
+const path = require('path');
 
 const app = express();
 app.use(cors());
-app.use(express.static('public'));
+app.use(express.static(__dirname)); // Root folder serve karo
+
+// Root route handle karo
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'index.html'));
+});
 
 const server = http.createServer(app);
 const io = socketIo(server, { cors: { origin: "*", methods: ["GET", "POST"] } });
@@ -16,13 +22,13 @@ let currentRound = {
   crashTarget: 2.00,
   multiplier: 1.00,
   isActive: false,
-  startTime: null // Yeh ab 10 second future ka time hoga
+  startTime: null
 };
 
 let roundInterval = null;
 let startTimeout = null;
 
-// ----- Generate Crash Target (same) -----
+// ----- Generate Crash Target -----
 function generateRandomCrashTarget() {
     let rand = Math.random() * 100;
     if (rand < 11) {
@@ -49,7 +55,6 @@ function crashRound() {
     crashMultiplier: currentRound.crashTarget 
   });
   
-  // 3 second baad naya round shuru karo
   setTimeout(() => {
     startNewRound();
   }, 3000);
@@ -57,7 +62,6 @@ function crashRound() {
 
 // ----- Start New Round (WITH 10 SECOND DELAY) -----
 function startNewRound() {
-  // Saare purane timers clear karo
   clearInterval(roundInterval);
   clearTimeout(startTimeout);
 
@@ -66,36 +70,30 @@ function startNewRound() {
   currentRound.multiplier = 1.00;
   currentRound.isActive = true;
   
-  // 🔥 IMPORTANT: Start time 10 second future mein rakho
   const startTime = Date.now() + 10000; 
   currentRound.startTime = startTime;
 
   console.log(`🛫 Round ${currentRound.period} scheduled. Target: ${currentRound.crashTarget}. Plane will take off in 10s`);
 
-  // 1. Sab clients ko round-start bhejo (timer start karne ke liye)
   io.emit('round-start', {
     period: currentRound.period,
     crashTarget: currentRound.crashTarget,
-    startTime: startTime // Future timestamp
+    startTime: startTime
   });
 
-  // 2. 🔥 10 second baad multiplier update karna shuru karo
   startTimeout = setTimeout(() => {
     if (!currentRound.isActive) return;
     
     console.log(`✈️ Round ${currentRound.period} takeoff!`);
-    
-    // Pehla update bhejo
     io.emit('multiplier-update', { multiplier: 1.00 });
 
-    // Har 50ms mein multiplier update karo
     roundInterval = setInterval(() => {
       if (!currentRound.isActive) return;
       
       const now = Date.now();
-      const elapsed = (now - currentRound.startTime) / 1000; // seconds
+      const elapsed = (now - currentRound.startTime) / 1000;
       
-      if (elapsed < 0) return; // safety
+      if (elapsed < 0) return;
       
       let progress = Math.min(elapsed / 10, 1);
       let multiplier = 1.00 + Math.pow(progress, 1.8) * (currentRound.crashTarget - 1.00);
@@ -104,7 +102,7 @@ function startNewRound() {
         multiplier = currentRound.crashTarget;
         currentRound.multiplier = multiplier;
         io.emit('multiplier-update', { multiplier: multiplier });
-        crashRound(); // Crash karo
+        crashRound();
         return;
       }
       
@@ -112,14 +110,13 @@ function startNewRound() {
       io.emit('multiplier-update', { multiplier: multiplier });
     }, 50);
     
-  }, 10000); // 10 second ka exact delay
+  }, 10000);
 }
 
 // ----- Socket Connection -----
 io.on('connection', (socket) => {
   console.log('🟢 User connected');
   
-  // Naye user ko current state bhejo
   if (currentRound.isActive) {
     socket.emit('round-start', {
       period: currentRound.period,
@@ -139,5 +136,5 @@ io.on('connection', (socket) => {
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
-  startNewRound(); // Pehla round shuru karo
+  startNewRound();
 });
