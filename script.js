@@ -20,7 +20,7 @@ if (typeof firebase !== 'undefined') {
     db = firebase.database();
 }
 
-// ----- DOM References (Unchanged) -----
+// ----- DOM References (Bilkul Pehle Jaisa) -----
 const timerLine = document.getElementById("timerLine");
 const gameElements = document.querySelectorAll(".game-element");
 const graphArea = document.getElementById("graphArea");
@@ -47,6 +47,8 @@ let currentMultiplier = 1.00;  // Updated by server
 let isCrashed = false;
 let animationFrameId = null;
 let isGameStartedYet = false;
+let isWaitingForTimer = false; // Timer chal raha hai
+let serverRoundActive = false; // Server ne round start kar diya hai
 
 // ----- Screen Geometry (Same as before) -----
 const width = 460;
@@ -61,8 +63,6 @@ const cpX = startX + (endX - startX) * 0.45;
 const cpY = startY;
 
 // ----- Helper: Compute plane position from multiplier -----
-// The curve: multiplier = 1 + progress^1.8 * (crashTarget - 1)
-// => progress = ((multiplier - 1) / (crashTarget - 1)) ^ (1/1.8)
 function getProgressFromMultiplier(multiplier, crash) {
     if (crash <= 1.0) return 0;
     const ratio = (multiplier - 1) / (crash - 1);
@@ -72,11 +72,9 @@ function getProgressFromMultiplier(multiplier, crash) {
 }
 
 function getPlanePosition(progress) {
-    // Smooth step (same as original)
     const smooth = Math.sin(progress * Math.PI / 2);
     let x = (1 - smooth) * (1 - smooth) * startX + 2 * (1 - smooth) * smooth * cpX + smooth * smooth * endX;
     let y = (1 - smooth) * (1 - smooth) * startY + 2 * (1 - smooth) * smooth * cpY + smooth * smooth * endY;
-    // Add small floating effect during takeoff
     const takeoffFloat = Math.sin(Date.now() * 0.005) * 1.2 * progress;
     y += takeoffFloat;
     return { x, y };
@@ -160,8 +158,15 @@ function removeBlackFromVideo() {
                 }
             }
             ctx.putImageData(imageData, 0, 0);
+            if (!isGameStartedYet) {
+                isGameStartedYet = true;
+                // Wait for server to send round-start
+            }
         } catch(e) {
-            // fallback
+            if (planeCanvas.width > 0 && planeCanvas.height > 0) {
+                ctx.clearRect(0, 0, planeCanvas.width, planeCanvas.height);
+                ctx.drawImage(planeVideo, 0, 0, planeCanvas.width, planeCanvas.height);
+            }
         }
     }
     requestAnimationFrame(removeBlackFromVideo);
@@ -193,67 +198,97 @@ function updateCounterColor(multiplier) {
         raysBg.style.filter = "drop-shadow(0px 0px 8px rgba(149, 17, 240, 0.35))";
     } else if (multiplier >= 10.00) {
         graphArea.style.setProperty('background', 'radial-gradient(circle at 50% 50%, #0c0208 0%, #050003 100%)', 'important');
+        counter.style.textShadow = "0px 0px 25px rgba(225, 5, 110, 0.9)";
         lightBeam.style.background = "radial-gradient(ellipse 70% 100% at 50% 40%, rgba(225, 5, 110, 0.35) 0%, rgba(0,0,0,0) 85%)";
         lightBeam.classList.add("show");
         raysBg.style.filter = "drop-shadow(0px 0px 8px rgba(225, 5, 110, 0.4))";
     }
 }
 
-// ----- Game Loop (Synchronized via Socket.IO) -----
+// ----- Timer aur Game Reset Functions (Pehle Jaisa) -----
 function resetGameUI() {
-    // Reset plane position
+    isCrashed = false;
+    serverRoundActive = false;
+    isWaitingForTimer = false;
+    if (animationFrameId) cancelAnimationFrame(animationFrameId);
+
     if (planeContainer) {
         planeContainer.style.transition = "none";
         planeContainer.style.display = "block";
         planeContainer.style.left = `${startX - tailOffsetX}px`;
         planeContainer.style.top = `${startY - tailOffsetY}px`;
     }
-    // Reset counter
     if (counter) {
         counter.innerText = "1.00x";
         counter.style.color = "#ffffff";
         counter.style.textShadow = "none";
     }
-    // Hide crash label
     if (flewAwayLabel) flewAwayLabel.classList.remove("show");
-    // Clear trail
     if (trailPath) { trailPath.setAttribute("d", ""); trailPath.style.opacity = "1"; }
     if (glowAreaPath) { glowAreaPath.setAttribute("d", ""); glowAreaPath.style.opacity = "1"; }
     if (lightBeam) lightBeam.classList.remove("show");
     if (raysBg) { raysBg.classList.remove("rays-paused"); raysBg.style.filter = "none"; }
-    // Show graph area
     if (graphArea) graphArea.style.display = "block";
     gameElements.forEach(el => { if (el) el.style.display = ""; });
-    // Hide timer line (we'll not use it for sync)
     if (timerLine) timerLine.classList.remove("timer-active");
 }
 
+function startMasterLoop() {
+    // Timer Start karo (Pehle jaisa 10 sec)
+    if (graphArea) graphArea.style.display = "block";
+    gameElements.forEach(el => { if (el) el.style.display = ""; });
+    if (counter) counter.style.display = "none";
+    if (flewAwayLabel) flewAwayLabel.classList.remove("show");
+    if (trailPath) { trailPath.removeAttribute("d"); trailPath.style.opacity = "0"; }
+    if (glowAreaPath) { glowAreaPath.removeAttribute("d"); glowAreaPath.style.opacity = "0"; }
+    if (raysBg) { raysBg.classList.add("rays-paused"); raysBg.style.filter = "none"; }
+    if (planeContainer) {
+        planeContainer.style.transition = "none";
+        planeContainer.style.display = "block";
+        planeContainer.style.left = `${startX - tailOffsetX}px`;
+        planeContainer.style.top = `${startY - tailOffsetY}px`;
+    }
+    if (timerLine) {
+        timerLine.classList.remove("timer-active");
+        void timerLine.offsetWidth;
+        timerLine.classList.add("timer-active");
+    }
+    
+    isWaitingForTimer = true;
+    // 10 second baad game shuru karo
+    setTimeout(() => {
+        if (!isCrashed && serverRoundActive) {
+            gameElements.forEach(el => { if (el) el.style.display = "none"; });
+            if (counter) counter.style.display = "block";
+            // Jo current multiplier server ne bheja hai, usko apply karo
+            updatePlaneAndCounter(currentMultiplier);
+            isWaitingForTimer = false;
+            // Background color set karo
+            if (graphArea) graphArea.style.setProperty('background', '#000000', 'important');
+        }
+    }, 10000);
+}
+
 function updatePlaneAndCounter(multiplier) {
-    if (isCrashed) return;
+    if (isCrashed || isWaitingForTimer) return;
     currentMultiplier = multiplier;
-    // Update counter
     if (counter) {
         counter.innerText = `${multiplier.toFixed(2)}x`;
         updateCounterColor(multiplier);
     }
-    // Update plane position based on progress
     const progress = getProgressFromMultiplier(multiplier, crashTarget);
     const pos = getPlanePosition(progress);
     if (planeContainer) {
         planeContainer.style.left = `${pos.x - tailOffsetX}px`;
         planeContainer.style.top = `${pos.y - tailOffsetY}px`;
     }
-    // Update trail
     let pathData = "";
     if (progress > 0.015) {
-        // Simple quadratic from start to current
         pathData = `M ${startX} ${startY} Q ${cpX} ${cpY} ${pos.x} ${pos.y}`;
     }
     if (trailPath) trailPath.setAttribute("d", pathData);
     let glowData = pathData ? `${pathData} L ${pos.x} ${startY} Z` : "";
     if (glowAreaPath) glowAreaPath.setAttribute("d", glowData);
-
-    // Update Firebase (optional)
     if (db) {
         db.ref("currentRound/multiplier").set(parseFloat(multiplier.toFixed(2)));
     }
@@ -262,22 +297,18 @@ function updatePlaneAndCounter(multiplier) {
 function triggerCrashSequence(crashMultiplier) {
     if (isCrashed) return;
     isCrashed = true;
+    serverRoundActive = false;
     if (animationFrameId) cancelAnimationFrame(animationFrameId);
-
-    // Final multiplier
     if (counter) {
         counter.innerText = `${crashMultiplier.toFixed(2)}x`;
         counter.style.color = "#cb1624";
         counter.style.textShadow = "none";
     }
-    // Show flew away label
     if (flewAwayLabel) flewAwayLabel.classList.add("show");
     if (lightBeam) lightBeam.classList.remove("show");
     if (raysBg) raysBg.classList.add("rays-paused");
     if (trailPath) trailPath.style.opacity = "0";
     if (glowAreaPath) glowAreaPath.style.opacity = "0";
-
-    // Animate plane flying away (same as before)
     const lastX = parseFloat(planeContainer?.style.left) || startX;
     const lastY = parseFloat(planeContainer?.style.top) || startY;
     if (planeContainer) {
@@ -285,8 +316,6 @@ function triggerCrashSequence(crashMultiplier) {
         planeContainer.style.left = `${width + 180}px`;
         planeContainer.style.top = `${lastY - 150}px`;
     }
-
-    // Save history to Firebase (optional)
     if (db) {
         try {
             db.ref('history').push(parseFloat(crashMultiplier.toFixed(2)));
@@ -297,17 +326,20 @@ function triggerCrashSequence(crashMultiplier) {
             });
         } catch(e) {}
     }
-
-    // Dispatch events (for other parts)
     window.dispatchEvent(new CustomEvent("gameCrashed", { detail: { multiplier: crashMultiplier } }));
+    // 3 second baad next round start
+    setTimeout(() => {
+        // Reset UI and wait for server to send new round
+        resetGameUI();
+        // Server se naya round aane par startMasterLoop chalega
+    }, 3000);
 }
 
-// ===================== SOCKET.IO INTEGRATION =====================
+// ===================== SOCKET.IO INTEGRATION (Timer ke saath) =====================
 let socket = null;
 
 function connectSocket() {
-    // Replace with your actual Render URL
-    const SERVER_URL = 'https://spribe-aviator.onrender.com'; // Change if different
+    const SERVER_URL = 'https://spribe-aviator.onrender.com'; // Apna Render URL daalo
     socket = io(SERVER_URL);
 
     socket.on('connect', () => {
@@ -316,50 +348,39 @@ function connectSocket() {
 
     socket.on('round-start', (data) => {
         console.log('🛫 Round started:', data);
-        // Reset game state
-        isCrashed = false;
-        crashTarget = data.crashTarget;
-        startTime = data.startTime; // Server timestamp
-        // Reset UI
         resetGameUI();
-        // Start the animation loop (we'll use multiplier updates for position)
-        if (animationFrameId) cancelAnimationFrame(animationFrameId);
-        // We don't need a continuous loop; we'll rely on multiplier-update events.
-        // But we still need to run a loop for the floating effect (optional).
-        // We'll just use the multiplier updates.
-        // However, the plane position updates are driven by multiplier updates.
-        // We'll also keep a fallback loop to ensure smoothness if updates lag.
-        // We'll start a lightweight loop that reads currentMultiplier.
-        function animationLoop() {
-            if (isCrashed) return;
-            // If multiplier is still 1.00, we can update plane at start.
-            updatePlaneAndCounter(currentMultiplier);
-            requestAnimationFrame(animationLoop);
-        }
-        animationLoop();
-        // Also dispatch event for other parts
-        window.dispatchEvent(new CustomEvent("gameRoundStarted", { detail: data }));
-        // Firebase period increment (optional)
+        crashTarget = data.crashTarget;
+        startTime = data.startTime;
+        serverRoundActive = true;
+        currentMultiplier = 1.00;
+        // Timer wala loop start karo
+        startMasterLoop();
+        // Firebase period update (optional)
         if (db) {
             db.ref("currentRound/period").transaction((current) => {
                 return current ? parseInt(current) + 1 : 11111111;
             });
             db.ref("currentRound/crashTarget").set(parseFloat(crashTarget.toFixed(2)));
         }
+        window.dispatchEvent(new CustomEvent("gameRoundStarted", { detail: data }));
     });
 
     socket.on('multiplier-update', (data) => {
-        // Immediately update game visuals
-        if (!isCrashed) {
+        if (!isCrashed && serverRoundActive && !isWaitingForTimer) {
             updatePlaneAndCounter(data.multiplier);
-            // Also update currentMultiplier for fallback loop
+        } else if (!isCrashed && serverRoundActive) {
+            // Agar timer chal raha hai, toh multiplier store karo baad ke liye
+            currentMultiplier = data.multiplier;
+        } else {
             currentMultiplier = data.multiplier;
         }
     });
 
     socket.on('round-crash', (data) => {
         console.log('💥 Round crashed:', data);
-        triggerCrashSequence(data.crashMultiplier);
+        if (!isCrashed) {
+            triggerCrashSequence(data.crashMultiplier);
+        }
     });
 
     socket.on('disconnect', () => {
@@ -370,21 +391,15 @@ function connectSocket() {
 
 // ----- Start the Game -----
 window.onload = () => {
-    // Start video filter
     removeBlackFromVideo();
-    // Connect to socket server
     connectSocket();
-    // Show initial UI
     resetGameUI();
-    // If the game hasn't started yet, the server will send round-start soon.
 };
 
-// ----- Keep the existing bet/tabs logic (unchanged) -----
-// (Your bet cards, tabs, etc. remain exactly as before)
-// ... (paste the rest of your original code below for bet cards, tabs, etc.)
-// I'll include it for completeness, but it's the same as your original.
+/* ========== BET & TAB LOGIC (Bilkul Pehle Jaisa, Kuch Nahi Badala) ========== */
+// (Tumhara original bet cards aur tabs ka code yahan aayega. 
+// Main chaine se neeche de raha hoon, lekin tum apne purane code se bhi replace kar sakte ho)
 
-/* ========== BET & TAB LOGIC (Unchanged from your original) ========== */
 document.querySelectorAll(".switch").forEach(sw=>{
     const buttons = sw.querySelectorAll(".switch-btn");
     buttons.forEach(btn=>{
