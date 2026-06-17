@@ -1,8 +1,9 @@
 /* ============================================================
-   FINAL SCRIPT.JS - SERVER SYNC + TIMER (Sab phones same)
+   FRONTEND - SIRF DISPLAY (TV SCREEN)
+   Game logic (Plane udana, crash, timer) ab TERMUX (Node.js) karega.
    ============================================================ */
 
-// ----- Firebase Setup -----
+// 1. FIREBASE INITIALIZATION
 const firebaseConfig = {
   apiKey: "AIzaSyCE-bz-QbLpAF4qLqejGHtE3qS8zdQjmAY",
   authDomain: "aviator-b8af3.firebaseapp.com",
@@ -20,7 +21,7 @@ if (typeof firebase !== 'undefined') {
     db = firebase.database();
 }
 
-// ----- DOM Elements -----
+// 2. DOM ELEMENTS (Screen Components)
 const timerLine = document.getElementById("timerLine");
 const gameElements = document.querySelectorAll(".game-element");
 const graphArea = document.getElementById("graphArea");
@@ -40,51 +41,13 @@ const dropdownPanel = document.getElementById("roundHistoryDropdownPanel");
 const dropdownCloseBtn = document.getElementById("dropdownCloseTrigger");
 const dropdownGridContainer = document.getElementById("historyMatrixGrid");
 
-// ----- Game Variables -----
-let crashTarget = 2.00;
-let currentMultiplier = 1.00;
-let isCrashed = false;
-let animationFrameId = null;
-let isGameStartedYet = false;
-let serverRoundActive = false;
-let serverStartTime = null;
-let isGamePlayActive = false;
-let timerTimeoutId = null;
-let holdStartTime = null;
-let isHoldingAtTop = false;
-
-// ----- Geometry -----
-const width = 460;
-const height = 250;
+// Screen Boundaries (Sirf starting position fallback ke liye)
 const startX = 35;
-const startY = height - 25;
-const endX = width * 0.52;
-const endY = height * 0.42;
+const startY = 225; // height - 25
 const tailOffsetX = 4;
 const tailOffsetY = 42;
-const cpX = startX + (endX - startX) * 0.45;
-const cpY = startY;
-const flyToTopDuration = 4000;
 
-// ----- Helpers -----
-function getProgressFromMultiplier(multiplier, crash) {
-    if (crash <= 1.0) return 0;
-    const ratio = (multiplier - 1) / (crash - 1);
-    if (ratio <= 0) return 0;
-    if (ratio >= 1) return 1;
-    return Math.pow(ratio, 1 / 1.8);
-}
-
-function getPlanePosition(progress) {
-    const smooth = Math.sin(progress * Math.PI / 2);
-    let x = (1 - smooth) * (1 - smooth) * startX + 2 * (1 - smooth) * smooth * cpX + smooth * smooth * endX;
-    let y = (1 - smooth) * (1 - smooth) * startY + 2 * (1 - smooth) * smooth * cpY + smooth * smooth * endY;
-    const takeoffFloat = Math.sin(Date.now() * 0.005) * 1.2 * progress;
-    y += takeoffFloat;
-    return { x, y };
-}
-
-// ----- History -----
+// 3. HISTORY UI UPDATE (Waise ka waisa)
 function updateHistoryUI(historyArray) {
     if (!multiBar) return;
     multiBar.innerHTML = "";
@@ -100,6 +63,7 @@ function updateHistoryUI(historyArray) {
         multiDiv.innerText = `${num.toFixed(2)}x`;
         multiBar.appendChild(multiDiv);
     });
+
     if (dropdownGridContainer) {
         dropdownGridContainer.innerHTML = "";
         const detailedHistory = historyArray.slice(-32);
@@ -117,28 +81,20 @@ function updateHistoryUI(historyArray) {
     }
 }
 
+// History Listener
 if (db) {
     db.ref('history').limitToLast(35).on('value', (snapshot) => {
         const data = snapshot.val();
-        if (data) {
-            const historyList = Object.values(data);
-            updateHistoryUI(historyList);
-        }
+        if (data) updateHistoryUI(Object.values(data));
     });
 }
 
-// ----- Dropdown -----
+// 4. DROPDOWN TOGGLE (Waise ka waisa)
 if (historyDropdownTrigger && dropdownPanel) {
-    historyDropdownTrigger.onclick = (e) => {
-        e.stopPropagation();
-        dropdownPanel.classList.toggle("show");
-    };
+    historyDropdownTrigger.onclick = (e) => { e.stopPropagation(); dropdownPanel.classList.toggle("show"); };
 }
 if (dropdownCloseBtn && dropdownPanel) {
-    dropdownCloseBtn.onclick = (e) => {
-        e.stopPropagation();
-        dropdownPanel.classList.remove("show");
-    };
+    dropdownCloseBtn.onclick = (e) => { e.stopPropagation(); dropdownPanel.classList.remove("show"); };
 }
 document.addEventListener("click", (e) => {
     if (dropdownPanel && !dropdownPanel.contains(e.target) && e.target !== historyDropdownTrigger) {
@@ -146,7 +102,7 @@ document.addEventListener("click", (e) => {
     }
 });
 
-// ----- Video Filter -----
+// 5. PLANE VIDEO CHROMA FILTER (Sirf plane ki video clean karne ke liye, game start nahi karega)
 function removeBlackFromVideo() {
     if (planeVideo && planeCanvas && ctx && planeVideo.readyState >= 2) {
         try {
@@ -163,7 +119,9 @@ function removeBlackFromVideo() {
                 }
             }
             ctx.putImageData(imageData, 0, 0);
-        } catch(e) {}
+        } catch(e) {
+            // Ignore errors
+        }
     }
     requestAnimationFrame(removeBlackFromVideo);
 }
@@ -174,12 +132,13 @@ if (planeVideo) {
     planeVideo.crossOrigin = "anonymous";
     planeVideo.addEventListener('loadeddata', () => {
         planeVideo.play().catch(() => {});
+        removeBlackFromVideo();
     });
 }
 
-// ----- Color Update -----
+// 6. COUNTER COLOR UPDATE (Sirf UI styling ke liye)
 function updateCounterColor(multiplier) {
-    if (isCrashed || !counter || !graphArea || !lightBeam || !raysBg) return;
+    if (!counter || !graphArea || !lightBeam || !raysBg) return;
     counter.style.color = "#ffffff";
     if (multiplier >= 1.00 && multiplier < 2.00) {
         graphArea.style.setProperty('background', '#000000', 'important');
@@ -194,200 +153,98 @@ function updateCounterColor(multiplier) {
         raysBg.style.filter = "drop-shadow(0px 0px 8px rgba(149, 17, 240, 0.35))";
     } else if (multiplier >= 10.00) {
         graphArea.style.setProperty('background', 'radial-gradient(circle at 50% 50%, #0c0208 0%, #050003 100%)', 'important');
+        counter.style.textShadow = "0px 0px 25px rgba(225, 5, 110, 0.9)";
         lightBeam.style.background = "radial-gradient(ellipse 70% 100% at 50% 40%, rgba(225, 5, 110, 0.35) 0%, rgba(0,0,0,0) 85%)";
         lightBeam.classList.add("show");
         raysBg.style.filter = "drop-shadow(0px 0px 8px rgba(225, 5, 110, 0.4))";
     }
 }
 
-// ===================== GAME FUNCTIONS =====================
+// 7. ============================================================
+//    📺 LIVE DISPLAY ENGINE (YEH SABSE IMPORTANT HAI)
+//    Ye Firebase se data read karega aur screen update karega.
+//    Jaise hi Termux DB me kuch likhega, ye turant dikhayega.
+// ============================================================
+if (db) {
+    db.ref('currentRound').on('value', (snapshot) => {
+        const data = snapshot.val();
+        if (!data) return;
 
-function resetGameUI() {
-    isCrashed = false;
-    serverRoundActive = false;
-    isGamePlayActive = false;
-    isHoldingAtTop = false;
-    holdStartTime = null;
-    if (timerTimeoutId) { clearTimeout(timerTimeoutId); timerTimeoutId = null; }
-    if (animationFrameId) cancelAnimationFrame(animationFrameId);
+        // A. Data Read Karo (Jo Termux ne bheja)
+        const multiplier = data.multiplier || 1.00;
+        const isCrashed = data.isCrashed || false;
+        const planeX = data.planeX || startX;
+        const planeY = data.planeY || startY;
+        const crashTarget = data.crashTarget || 1.00;
 
-    if (planeContainer) {
-        planeContainer.style.transition = "none";
-        planeContainer.style.display = "block";
-        planeContainer.style.left = `${startX - tailOffsetX}px`;
-        planeContainer.style.top = `${startY - tailOffsetY}px`;
-    }
-    if (counter) {
-        counter.innerText = "1.00x";
-        counter.style.color = "#ffffff";
-        counter.style.textShadow = "none";
-        counter.style.display = "block";
-    }
-    if (flewAwayLabel) flewAwayLabel.classList.remove("show");
-    if (trailPath) { trailPath.setAttribute("d", ""); trailPath.style.opacity = "1"; }
-    if (glowAreaPath) { glowAreaPath.setAttribute("d", ""); glowAreaPath.style.opacity = "1"; }
-    if (lightBeam) lightBeam.classList.remove("show");
-    if (raysBg) { raysBg.classList.remove("rays-paused"); raysBg.style.filter = "none"; }
-    if (graphArea) graphArea.style.display = "block";
-    gameElements.forEach(el => { if (el) el.style.display = ""; });
-    if (timerLine) timerLine.classList.remove("timer-active");
-}
+        // B. Counter Update
+        if (counter) {
+            counter.style.display = 'block';
+            counter.innerText = multiplier.toFixed(2) + 'x';
+            if (!isCrashed) {
+                updateCounterColor(multiplier);
+            } else {
+                // Crash hua toh red color
+                counter.style.color = "#cb1624";
+                counter.style.textShadow = "none";
+                if (lightBeam) lightBeam.classList.remove('show');
+                if (raysBg) raysBg.style.filter = "none";
+            }
+        }
 
-function startMasterLoop() {
-    if (graphArea) graphArea.style.display = "block";
-    gameElements.forEach(el => { if (el) el.style.display = ""; });
-    if (counter) counter.style.display = "none";
-    if (flewAwayLabel) flewAwayLabel.classList.remove("show");
-    if (trailPath) { trailPath.removeAttribute("d"); trailPath.style.opacity = "0"; }
-    if (glowAreaPath) { glowAreaPath.removeAttribute("d"); glowAreaPath.style.opacity = "0"; }
-    if (raysBg) { raysBg.classList.add("rays-paused"); raysBg.style.filter = "none"; }
-    if (planeContainer) {
-        planeContainer.style.transition = "none";
-        planeContainer.style.display = "block";
-        planeContainer.style.left = `${startX - tailOffsetX}px`;
-        planeContainer.style.top = `${startY - tailOffsetY}px`;
-    }
-    if (timerLine) {
-        timerLine.classList.remove("timer-active");
-        void timerLine.offsetWidth;
-        timerLine.classList.add("timer-active");
-    }
+        // C. Plane ki Position Update (Smooth instant move)
+        if (planeContainer) {
+            planeContainer.style.transition = 'none';
+            planeContainer.style.display = 'block';
+            planeContainer.style.left = (planeX - tailOffsetX) + 'px';
+            planeContainer.style.top = (planeY - tailOffsetY) + 'px';
+        }
 
-    const now = Date.now();
-    const delay = Math.max(0, serverStartTime - now);
+        // D. Trail / Glow Path (Simple curve)
+        // Agar Termux path bhejta hai toh use karo, warna simple line
+        if (trailPath) {
+            let pathD = `M ${startX} ${startY} Q ${startX + 100} ${startY - 50} ${planeX} ${planeY}`;
+            trailPath.setAttribute('d', pathD);
+            trailPath.style.opacity = (isCrashed ? '0' : '1');
+        }
+        if (glowAreaPath) {
+            let glowD = `M ${startX} ${startY} Q ${startX + 100} ${startY - 50} ${planeX} ${planeY} L ${planeX} ${startY} Z`;
+            glowAreaPath.setAttribute('d', glowD);
+            glowAreaPath.style.opacity = (isCrashed ? '0' : '1');
+        }
 
-    if (timerTimeoutId) clearTimeout(timerTimeoutId);
-    timerTimeoutId = setTimeout(() => {
-        if (isCrashed) return;
-        isGamePlayActive = true;
-        gameElements.forEach(el => { if (el) el.style.display = "none"; });
-        if (counter) counter.style.display = "block";
-        if (graphArea) graphArea.style.setProperty('background', '#000000', 'important');
-        updatePlaneAndCounter(currentMultiplier);
-        window.dispatchEvent(new CustomEvent("gameRoundStarted"));
-    }, delay);
-}
+        // E. "Flew Away" Label
+        if (flewAwayLabel) {
+            if (isCrashed) flewAwayLabel.classList.add('show');
+            else flewAwayLabel.classList.remove('show');
+        }
 
-function updatePlaneAndCounter(multiplier) {
-    if (isCrashed || !isGamePlayActive) return;
-    currentMultiplier = multiplier;
-    if (counter) {
-        counter.innerText = `${multiplier.toFixed(2)}x`;
-        updateCounterColor(multiplier);
-    }
-    const progress = getProgressFromMultiplier(multiplier, crashTarget);
-    const pos = getPlanePosition(progress);
-    if (planeContainer) {
-        planeContainer.style.left = `${pos.x - tailOffsetX}px`;
-        planeContainer.style.top = `${pos.y - tailOffsetY}px`;
-    }
-    let pathData = "";
-    if (progress > 0.015) {
-        pathData = `M ${startX} ${startY} Q ${cpX} ${cpY} ${pos.x} ${pos.y}`;
-    }
-    if (trailPath) trailPath.setAttribute("d", pathData);
-    let glowData = pathData ? `${pathData} L ${pos.x} ${startY} Z` : "";
-    if (glowAreaPath) glowAreaPath.setAttribute("d", glowData);
-    if (db) {
-        db.ref("currentRound/multiplier").set(parseFloat(multiplier.toFixed(2)));
-    }
-}
+        // F. Timer Line (Bar) - Active rahega jab tak crash na ho
+        if (timerLine) {
+            if (isCrashed) timerLine.classList.remove('timer-active');
+            else timerLine.classList.add('timer-active');
+        }
 
-function triggerCrashSequence(crashMultiplier) {
-    if (isCrashed) return;
-    isCrashed = true;
-    isGamePlayActive = false;
-    serverRoundActive = false;
-    if (timerTimeoutId) { clearTimeout(timerTimeoutId); timerTimeoutId = null; }
-    if (animationFrameId) cancelAnimationFrame(animationFrameId);
+        // G. Rays & Light Beam
+        if (raysBg) {
+            if (isCrashed) raysBg.classList.add('rays-paused');
+            else raysBg.classList.remove('rays-paused');
+        }
+        if (lightBeam) {
+            if (isCrashed) lightBeam.classList.remove('show');
+            else lightBeam.classList.add('show');
+        }
 
-    if (counter) {
-        counter.innerText = `${crashMultiplier.toFixed(2)}x`;
-        counter.style.color = "#cb1624";
-        counter.style.textShadow = "none";
-    }
-    if (flewAwayLabel) flewAwayLabel.classList.add("show");
-    if (lightBeam) lightBeam.classList.remove("show");
-    if (raysBg) raysBg.classList.add("rays-paused");
-    if (trailPath) trailPath.style.opacity = "0";
-    if (glowAreaPath) glowAreaPath.style.opacity = "0";
-
-    const lastX = parseFloat(planeContainer?.style.left) || startX;
-    const lastY = parseFloat(planeContainer?.style.top) || startY;
-    if (planeContainer) {
-        planeContainer.style.transition = "left 0.7s cubic-bezier(0.4, 0.0, 0.2, 1), top 0.7s cubic-bezier(0.4, 0.0, 0.2, 1)";
-        planeContainer.style.left = `${width + 180}px`;
-        planeContainer.style.top = `${lastY - 150}px`;
-    }
-
-    if (db) {
-        try {
-            db.ref('history').push(parseFloat(crashMultiplier.toFixed(2)));
-            db.ref("currentRound/adminOverride").set({
-                active: false,
-                target: "2.00",
-                timestamp: firebase.database.ServerValue.TIMESTAMP
-            });
-        } catch(e) {}
-    }
-
-    window.dispatchEvent(new CustomEvent("gameCrashed"));
-    setTimeout(() => { resetGameUI(); }, 3000);
-}
-
-// ===================== SOCKET.IO =====================
-let socket = null;
-
-function connectSocket() {
-    const SERVER_URL = 'https://spribe-aviator.onrender.com';
-    socket = io(SERVER_URL);
-
-    socket.on('connect', () => {
-        console.log('✅ Connected');
-    });
-
-    socket.on('round-start', (data) => {
-        resetGameUI();
-        crashTarget = data.crashTarget;
-        serverStartTime = data.startTime;
-        serverRoundActive = true;
-        currentMultiplier = 1.00;
-        isGamePlayActive = false;
-        startMasterLoop();
-        if (db) {
-            db.ref("currentRound/period").transaction((current) => {
-                return current ? parseInt(current) + 1 : 11111111;
-            });
-            db.ref("currentRound/crashTarget").set(parseFloat(crashTarget.toFixed(2)));
+        // H. GraphArea background default
+        if (graphArea && !isCrashed) {
+            graphArea.style.setProperty('background', '#000000', 'important');
         }
     });
-
-    socket.on('multiplier-update', (data) => {
-        currentMultiplier = data.multiplier;
-        if (!isCrashed && isGamePlayActive) {
-            updatePlaneAndCounter(data.multiplier);
-        }
-    });
-
-    socket.on('round-crash', (data) => {
-        if (!isCrashed) {
-            triggerCrashSequence(data.crashMultiplier);
-        }
-    });
-
-    socket.on('disconnect', () => {
-        setTimeout(connectSocket, 2000);
-    });
+} else {
+    console.warn("Firebase not initialized. Display will not work.");
 }
 
-// ----- Start -----
-window.onload = () => {
-    removeBlackFromVideo();
-    connectSocket();
-    resetGameUI();
-};
-
-// ========== BET & TABS ==========
+// 8. BETTING CARDS & TABS LOGIC (Bilkul waise ka waisa, koi change nahi)
 document.querySelectorAll(".switch").forEach(sw => {
     const buttons = sw.querySelectorAll(".switch-btn");
     buttons.forEach(btn => {
@@ -459,6 +316,7 @@ document.querySelectorAll(".bet-card").forEach(card => {
             updateDisplay();
         };
     }
+
     if (minus) {
         minus.onclick = () => {
             if (!input || input.disabled) return;
@@ -469,6 +327,7 @@ document.querySelectorAll(".bet-card").forEach(card => {
             updateDisplay();
         };
     }
+
     if (input) {
         input.oninput = () => {
             let val = parseInt(input.value) || 10;
@@ -478,6 +337,7 @@ document.querySelectorAll(".bet-card").forEach(card => {
             updateDisplay();
         };
     }
+
     if (betBtn) {
         betBtn.onclick = () => {
             if (betBtn.classList.contains("active-cashout") || betBtn.classList.contains("successfully-cashedout")) return;
@@ -503,3 +363,6 @@ tabs.forEach(tab => {
         tab.classList.add("active-tab");
     };
 });
+
+// 9. WINDOW LOAD - Ab bas display ready hai, koi timer nahi chlega
+console.log("✅ Frontend Display Ready. Waiting for Termux Engine data...");
