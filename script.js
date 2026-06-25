@@ -1,4 +1,5 @@
 /* BRIDGE INITIALIZATION & CORE CONTROL */
+
 // Firebase initialization using CDN Globals (No import errors)
 const firebaseConfig = {
   apiKey: "AIzaSyCE-bz-QbLpAF4qLqejGHtE3qS8zdQjmAY",
@@ -46,12 +47,7 @@ let holdStartTime = null;
 let animationFrameId = null;
 let isGameStartedYet = false; 
 
-// MULTI-PLAYER MULTI-DEVICE VARIABLES
-let myPlayerKey = null;      
-let currentHostKey = null;   
-let isHost = false;          
-let gameLoopActive = false;  
-
+// Initial default, will be overwritten every round randomly
 let crashTarget = 15.00;
 const flyToTopDuration = 4000; 
 
@@ -79,38 +75,56 @@ function generateRandomCrashTarget() {
     }
 }
 
-// History updates sync UI builder
+// History updates sync UI builder with clean layouts & Dropdown content feeds
 function updateHistoryUI(historyArray) {
     if (!multiBar) return;
     multiBar.innerHTML = "";
     
+    // 1. Top Bar Slider: Last 15 entries display mechanism
     const recentHistory = historyArray.slice(-15);
     recentHistory.reverse().forEach(val => {
         const multiDiv = document.createElement("div");
         multiDiv.className = "multi";
         
         let num = parseFloat(val);
-        if (num >= 1.00 && num <= 1.99) { multiDiv.classList.add("low"); } 
-        else if (num >= 2.00 && num <= 9.99) { multiDiv.classList.add("mid"); } 
-        else if (num >= 10.00) { multiDiv.classList.add("high"); } 
-        else { multiDiv.classList.add("low"); }
+        // STRICT RULE COLOR-CODE MAPPING WITHOUT SOLID BACKGROUNDS
+        if (num >= 1.00 && num <= 1.99) { 
+            multiDiv.classList.add("low"); // Blue Border & Color Text
+        } 
+        else if (num >= 2.00 && num <= 9.99) { 
+            multiDiv.classList.add("mid"); // Purple Border & Color Text
+        } 
+        else if (num >= 10.00) { 
+            multiDiv.classList.add("high"); // Dark Pink Border & Color Text
+        } else {
+            multiDiv.classList.add("low");
+        }
         
         multiDiv.innerText = `${num.toFixed(2)}x`;
         multiBar.appendChild(multiDiv);
     });
 
+    // 2. Expand Grid Panel: Load comprehensive last 32 items matrix layout
     if (dropdownGridContainer) {
         dropdownGridContainer.innerHTML = "";
-        const detailedHistory = historyArray.slice(-32); 
+        const detailedHistory = historyArray.slice(-32); // Exact 32 Items Matrix Grid
         detailedHistory.reverse().forEach(val => {
             const gridDiv = document.createElement("div");
             gridDiv.className = "multi";
             
             let num = parseFloat(val);
-            if (num >= 1.00 && num <= 1.99) { gridDiv.classList.add("low"); } 
-            else if (num >= 2.00 && num <= 9.99) { gridDiv.classList.add("mid"); } 
-            else if (num >= 10.00) { gridDiv.classList.add("high"); } 
-            else { gridDiv.classList.add("low"); }
+            // STRICT RULE COLOR-CODE MAPPING FOR GRID MATRIX
+            if (num >= 1.00 && num <= 1.99) { 
+                gridDiv.classList.add("low"); // Blue
+            } 
+            else if (num >= 2.00 && num <= 9.99) { 
+                gridDiv.classList.add("mid"); // Purple
+            } 
+            else if (num >= 10.00) { 
+                gridDiv.classList.add("high"); // Dark Pink
+            } else {
+                gridDiv.classList.add("low");
+            }
             
             gridDiv.innerText = `${num.toFixed(2)}x`;
             dropdownGridContainer.appendChild(gridDiv);
@@ -118,7 +132,7 @@ function updateHistoryUI(historyArray) {
     }
 }
 
-// Live sync database history
+// Live sync database collection callback hook (Requests last 35 updates seamlessly)
 if (db) {
     db.ref('history').limitToLast(35).on('value', (snapshot) => {
         const data = snapshot.val();
@@ -129,19 +143,21 @@ if (db) {
     });
 }
 
-// Toggle Dropdown Sheet Events
+// Toggle Dropdown Sheet Events with State Control
 if (historyDropdownTrigger && dropdownPanel) {
     historyDropdownTrigger.onclick = (e) => {
         e.stopPropagation();
         dropdownPanel.classList.toggle("show");
     };
 }
+
 if (dropdownCloseBtn && dropdownPanel) {
     dropdownCloseBtn.onclick = (e) => {
         e.stopPropagation();
         dropdownPanel.classList.remove("show");
     };
 }
+
 document.addEventListener("click", (e) => {
     if (dropdownPanel && !dropdownPanel.contains(e.target) && e.target !== historyDropdownTrigger) {
         dropdownPanel.classList.remove("show");
@@ -165,10 +181,18 @@ function removeBlackFromVideo() {
                 }
             }
             ctx.putImageData(imageData, 0, 0);
+            if (!isGameStartedYet) {
+                isGameStartedYet = true;
+                startMasterLoop();
+            }
         } catch(e) {
             if (planeCanvas.width > 0 && planeCanvas.height > 0) {
                 ctx.clearRect(0, 0, planeCanvas.width, planeCanvas.height);
                 ctx.drawImage(planeVideo, 0, 0, planeCanvas.width, planeCanvas.height);
+            }
+            if (!isGameStartedYet) {
+                isGameStartedYet = true;
+                startMasterLoop();
             }
         }
     }
@@ -182,8 +206,10 @@ if (planeVideo) {
     planeVideo.addEventListener('loadeddata', () => {
         planeVideo.play().then(() => {
             removeBlackFromVideo();
-        }).catch((err) => {
-            console.log("Video play pending interaction:", err);
+        }).catch(() => {
+            setTimeout(() => {
+                if(!isGameStartedYet) { isGameStartedYet = true; startMasterLoop(); }
+            }, 1000);
         });
     });
 }
@@ -210,71 +236,7 @@ function updateCounterColor(multiplier) {
     }
 }
 
-/* REALTIME MULTIPLAYER SYSTEM FLOW */
-function setupMultiplayerSystem() {
-    if (!db) {
-        isHost = true;
-        startMasterLoop(); 
-        return;
-    }
-
-    const myUserRef = db.ref("roomPlayers").push();
-    myPlayerKey = myUserRef.key;
-
-    myUserRef.set({ timestamp: firebase.database.ServerValue.TIMESTAMP });
-    myUserRef.onDisconnect().remove();
-
-    db.ref("roomPlayers").on("value", (snapshot) => {
-        const players = snapshot.val();
-        if (!players) {
-            currentHostKey = null;
-            isHost = false;
-            stopGameEngineLoop();
-            return;
-        }
-
-        const sortedKeys = Object.keys(players).sort((a, b) => players[a].timestamp - players[b].timestamp);
-        const dynamicLeader = sortedKeys[0];
-
-        if (currentHostKey !== dynamicLeader) {
-            currentHostKey = dynamicLeader;
-            
-            if (myPlayerKey === currentHostKey) {
-                isHost = true;
-                db.ref("currentRound/activeHost").set(myPlayerKey);
-                if (!gameLoopActive) {
-                    startMasterLoop();
-                }
-            } else {
-                isHost = false;
-                listenToHostEngine();
-            }
-        }
-    });
-
-    db.ref("currentRound/status").on("value", (snap) => {
-        let status = snap.val();
-        if(status === "waiting" && !isHost) {
-            triggerViewerWaitingState();
-        }
-    });
-}
-
-function stopGameEngineLoop() {
-    gameLoopActive = false;
-    cancelAnimationFrame(animationFrameId);
-    if (counter) {
-        counter.style.display = "block";
-        counter.innerText = "WAITING FOR PLAYERS";
-    }
-}
-
 function startMasterLoop() {
-    if (!isHost) return; 
-    gameLoopActive = true;
-
-    if (db) db.ref("currentRound/status").set("waiting");
-
     if (graphArea) graphArea.style.display = "block"; 
     gameElements.forEach(el => { if (el) el.style.display = ""; });
     if (counter) counter.style.display = "none"; 
@@ -296,37 +258,11 @@ function startMasterLoop() {
         void timerLine.offsetWidth; 
         timerLine.classList.add("timer-active");
     }
-
     setTimeout(() => {
-        if (!gameLoopActive || !isHost) return;
         gameElements.forEach(el => { if (el) el.style.display = "none"; }); 
         if (counter) counter.style.display = "block"; 
         initGraphEngine();
     }, 10000); 
-}
-
-function triggerViewerWaitingState() {
-    if (graphArea) graphArea.style.display = "block"; 
-    gameElements.forEach(el => { if (el) el.style.display = ""; });
-    if (counter) counter.style.display = "none"; 
-    if (flewAwayLabel) flewAwayLabel.classList.remove("show");
-    
-    if (trailPath) { trailPath.removeAttribute("d"); trailPath.style.opacity = "0"; }
-    if (glowAreaPath) { glowAreaPath.removeAttribute("d"); glowAreaPath.style.opacity = "0"; }
-    if (raysBg) { raysBg.classList.add("rays-paused"); raysBg.style.filter = "none"; }
-    
-    if (planeContainer) {
-        planeContainer.style.transition = "none"; 
-        planeContainer.style.display = "block";
-        planeContainer.style.left = `${startX - tailOffsetX}px`;
-        planeContainer.style.top = `${startY - tailOffsetY}px`;
-    }
-    
-    if (timerLine) {
-        timerLine.classList.remove("timer-active");
-        void timerLine.offsetWidth; 
-        timerLine.classList.add("timer-active");
-    }
 }
 
 function initGraphEngine() {
@@ -350,13 +286,17 @@ function initGraphEngine() {
         planeContainer.style.top = `${startY - tailOffsetY}px`;
     }
 
-    if (db && isHost) {
-        db.ref("currentRound/status").set("flying");
-
+    // FEATURE 1: PERIOD NUMBER SYNCHRONIZATION AND +1 INCREMENT
+    if (db) {
         db.ref("currentRound/period").transaction((currentPeriod) => {
-            return currentPeriod === null ? 11111111 : parseInt(currentPeriod) + 1;
+            if (currentPeriod === null) {
+                return 11111111;
+            } else {
+                return parseInt(currentPeriod) + 1;
+            }
         });
         
+        // FEATURE 2: ADMIN PANEL TARGET OVERRIDE CONTROLLER CHECK
         db.ref("currentRound/adminOverride").once("value", (snap) => {
             let overrideData = snap.val();
             if (overrideData && overrideData.active === true) {
@@ -364,21 +304,22 @@ function initGraphEngine() {
             } else {
                 crashTarget = generateRandomCrashTarget();
             }
+            // Update the next expected crash target on dashboard
             db.ref("currentRound/crashTarget").set(parseFloat(crashTarget.toFixed(2)));
         });
         
+        // Initialize multiplier baseline in db
         db.ref("currentRound/multiplier").set(1.00);
-        window.dispatchEvent(new CustomEvent("gameRoundStarted"));
-        animationFrameId = requestAnimationFrame(animateEngine);
-    } else if (!db) {
+    } else {
         crashTarget = generateRandomCrashTarget();
-        window.dispatchEvent(new CustomEvent("gameRoundStarted"));
-        animationFrameId = requestAnimationFrame(animateEngine);
     }
+    
+    window.dispatchEvent(new CustomEvent("gameRoundStarted"));
+    animationFrameId = requestAnimationFrame(animateEngine);
 }
 
 function animateEngine(timestamp) {
-    if (isCrashed || !isHost) return; 
+    if (isCrashed) return;
     if (!startTime) startTime = timestamp;
     
     let currentX, currentY;
@@ -386,8 +327,9 @@ function animateEngine(timestamp) {
     const cpX = startX + (endX - startX) * 0.45;
     const cpY = startY;
     
+    // Total elapsed time in seconds from start of the graph round
     let totalElapsedSeconds = (timestamp - startTime) / 1000;
-    
+
     if (!isHoldingAtTop) {
         let elapsed = timestamp - startTime;
         let progress = elapsed / flyToTopDuration;
@@ -398,12 +340,12 @@ function animateEngine(timestamp) {
         let takeoffFloat = Math.sin(timestamp * 0.005) * 1.2;
         currentY += takeoffFloat * progress;
         
+        // APPLIED SPECIFIED FORMULA (Math.pow(2, elapsed / 8.5))
         currentMultiplier = Math.pow(2, totalElapsedSeconds / 8.5);
         
         if (currentMultiplier >= crashTarget) {
             currentMultiplier = crashTarget;
             if (counter) counter.innerText = `${crashTarget.toFixed(2)}x`;
-            if (db) db.ref("currentRound/multiplier").set(parseFloat(currentMultiplier.toFixed(2)));
             triggerCrashSequence(currentX, currentY);
             return;
         }
@@ -414,12 +356,12 @@ function animateEngine(timestamp) {
         let wave2 = Math.cos(timestamp * 0.005) * 3.5;
         currentY = endY + wave1 + wave2;
         
+        // APPLIED SPECIFIED FORMULA CONTINUOUSLY FOR STEADY FLIGHT
         currentMultiplier = Math.pow(2, totalElapsedSeconds / 8.5);
         
         if (currentMultiplier >= crashTarget) {
             currentMultiplier = crashTarget;
             if (counter) counter.innerText = `${crashTarget.toFixed(2)}x`;
-            if (db) db.ref("currentRound/multiplier").set(parseFloat(currentMultiplier.toFixed(2)));
             triggerCrashSequence(currentX, currentY);
             return;
         }
@@ -442,6 +384,7 @@ function animateEngine(timestamp) {
         updateCounterColor(currentMultiplier);
     }
     
+    // B. Live Running Multiplier Update to Database for Admin Panel view
     if (db) {
         db.ref("currentRound/multiplier").set(parseFloat(currentMultiplier.toFixed(2)));
     }
@@ -449,81 +392,14 @@ function animateEngine(timestamp) {
     animationFrameId = requestAnimationFrame(animateEngine);
 }
 
-/* VIEWER STREAM SYNC METHOD */
-function listenToHostEngine() {
-    if (isHost || !db) return;
-
-    db.ref("currentRound/multiplier").on("value", (snapshot) => {
-        if (isHost) return; 
-        let liveMultiplier = snapshot.val() || 1.00;
-
-        db.ref("currentRound/status").once("value", (statusSnap) => {
-            if (statusSnap.val() !== "flying" || isCrashed) return;
-
-            let fakeElapsedSeconds = Math.log2(liveMultiplier) * 8.5;
-            let fakeElapsedMs = fakeElapsedSeconds * 1000;
-            
-            let currentX, currentY;
-            const cpX = startX + (endX - startX) * 0.45;
-            const cpY = startY;
-            let timestamp = performance.now();
-
-            let progress = fakeElapsedMs / flyToTopDuration;
-            if (progress > 1) progress = 1;
-            let smoothProgress = Math.sin(progress * Math.PI / 2);
-
-            if (progress < 1) {
-                currentX = (1 - smoothProgress) * (1 - smoothProgress) * startX + 2 * (1 - smoothProgress) * smoothProgress * cpX + smoothProgress * smoothProgress * endX;
-                currentY = (1 - smoothProgress) * (1 - smoothProgress) * startY + 2 * (1 - smoothProgress) * smoothProgress * cpY + smoothProgress * smoothProgress * endY;
-                let takeoffFloat = Math.sin(timestamp * 0.005) * 1.2;
-                currentY += takeoffFloat * progress;
-            } else {
-                currentX = endX;
-                let wave1 = Math.sin(timestamp * 0.0025) * 14.5;
-                let wave2 = Math.cos(timestamp * 0.005) * 3.5;
-                currentY = endY + wave1 + wave2;
-            }
-
-            let pathData = progress > 0.015 ? `M ${startX} ${startY} Q ${cpX} ${cpY} ${currentX} ${currentY}` : "";
-            if (trailPath) trailPath.setAttribute("d", pathData);
-            let glowData = pathData ? `${pathData} L ${currentX} ${startY} Z` : "";
-            if (glowAreaPath) glowAreaPath.setAttribute("d", glowData);
-            
-            if (planeContainer) {
-                planeContainer.style.left = `${currentX - tailOffsetX}px`;
-                planeContainer.style.top = `${currentY - tailOffsetY}px`;
-            }
-            if (counter) {
-                counter.innerText = `${liveMultiplier.toFixed(2)}x`;
-                updateCounterColor(liveMultiplier);
-            }
-            window.dispatchEvent(new CustomEvent("multiplierUpdate", { detail: { multiplier: liveMultiplier } }));
-        });
-    });
-
-    db.ref("currentRound/status").on("value", (snap) => {
-        if (isHost) return;
-        let currentStatus = snap.val();
-        if (currentStatus === "crashed" && !isCrashed) {
-            db.ref("currentRound/crashTarget").once("value", (targetSnap) => {
-                crashTarget = targetSnap.val() || 1.00;
-                let lastX = parseFloat(planeContainer.style.left) || endX;
-                let lastY = parseFloat(planeContainer.style.top) || endY;
-                triggerCrashSequence(lastX, lastY);
-            });
-        }
-    });
-}
-
 function triggerCrashSequence(lastX, lastY) {
     window.dispatchEvent(new CustomEvent("gameCrashed"));
     isCrashed = true;
     cancelAnimationFrame(animationFrameId);
-    
-    if (db && isHost) {
+    if (db) {
         try {
-            db.ref("currentRound/status").set("crashed");
             db.ref('history').push(parseFloat(crashTarget.toFixed(2)));
+            // Reset manual override command structure smoothly for next automatic cycle
             db.ref("currentRound/adminOverride").set({
                 active: false,
                 target: "2.00",
@@ -533,7 +409,6 @@ function triggerCrashSequence(lastX, lastY) {
             console.error("Database sync operation fault:", e);
         }
     }
-    
     if (raysBg) raysBg.classList.add("rays-paused");
     if (flewAwayLabel) flewAwayLabel.classList.add("show");
     if (lightBeam) lightBeam.classList.remove("show");
@@ -549,21 +424,14 @@ function triggerCrashSequence(lastX, lastY) {
         planeContainer.style.left = `${width + 180}px`; 
         planeContainer.style.top = `${lastY - 150}px`; 
     }
-    
-    setTimeout(() => { 
-        if (isHost && gameLoopActive) {
-            startMasterLoop(); 
-        }
-    }, 3000);
+    setTimeout(() => { startMasterLoop(); }, 3000);
 }
 
-// FIX: Window completely ready hone par hi multiplayer network activate hoga
-window.addEventListener("DOMContentLoaded", () => {
-    if (!isGameStartedYet) { 
-        isGameStartedYet = true; 
-        setupMultiplayerSystem(); 
-    }
-});
+window.onload = () => {
+    setTimeout(() => {
+        if (!isGameStartedYet) { isGameStartedYet = true; startMasterLoop(); }
+    }, 2000);
+};
 
 /* TABS & INPUT LOGIC CONTROL */
 document.querySelectorAll(".switch").forEach(sw=>{
