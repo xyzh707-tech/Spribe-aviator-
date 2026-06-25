@@ -46,11 +46,11 @@ let holdStartTime = null;
 let animationFrameId = null;
 let isGameStartedYet = false; 
 
-// NEW MULTI-PLAYER MULTI-DEVICE VARIABLES
-let myPlayerKey = null;      // Is device ka unique session ID
-let currentHostKey = null;   // Abhi jo calculations sambhal raha hai uski ID
-let isHost = false;          // Kya ye device khud host hai?
-let gameLoopActive = false;  // Kya game active state mein chal raha hai?
+// MULTI-PLAYER MULTI-DEVICE VARIABLES
+let myPlayerKey = null;      
+let currentHostKey = null;   
+let isHost = false;          
+let gameLoopActive = false;  
 
 let crashTarget = 15.00;
 const flyToTopDuration = 4000; 
@@ -79,7 +79,7 @@ function generateRandomCrashTarget() {
     }
 }
 
-// History updates sync UI builder with clean layouts & Dropdown content feeds
+// History updates sync UI builder
 function updateHistoryUI(historyArray) {
     if (!multiBar) return;
     multiBar.innerHTML = "";
@@ -90,17 +90,10 @@ function updateHistoryUI(historyArray) {
         multiDiv.className = "multi";
         
         let num = parseFloat(val);
-        if (num >= 1.00 && num <= 1.99) { 
-            multiDiv.classList.add("low"); 
-        } 
-        else if (num >= 2.00 && num <= 9.99) { 
-            multiDiv.classList.add("mid"); 
-        } 
-        else if (num >= 10.00) { 
-            multiDiv.classList.add("high"); 
-        } else {
-            multiDiv.classList.add("low");
-        }
+        if (num >= 1.00 && num <= 1.99) { multiDiv.classList.add("low"); } 
+        else if (num >= 2.00 && num <= 9.99) { multiDiv.classList.add("mid"); } 
+        else if (num >= 10.00) { multiDiv.classList.add("high"); } 
+        else { multiDiv.classList.add("low"); }
         
         multiDiv.innerText = `${num.toFixed(2)}x`;
         multiBar.appendChild(multiDiv);
@@ -114,17 +107,10 @@ function updateHistoryUI(historyArray) {
             gridDiv.className = "multi";
             
             let num = parseFloat(val);
-            if (num >= 1.00 && num <= 1.99) { 
-                gridDiv.classList.add("low"); 
-            } 
-            else if (num >= 2.00 && num <= 9.99) { 
-                gridDiv.classList.add("mid"); 
-            } 
-            else if (num >= 10.00) { 
-                gridDiv.classList.add("high"); 
-            } else {
-                gridDiv.classList.add("low");
-            }
+            if (num >= 1.00 && num <= 1.99) { gridDiv.classList.add("low"); } 
+            else if (num >= 2.00 && num <= 9.99) { gridDiv.classList.add("mid"); } 
+            else if (num >= 10.00) { gridDiv.classList.add("high"); } 
+            else { gridDiv.classList.add("low"); }
             
             gridDiv.innerText = `${num.toFixed(2)}x`;
             dropdownGridContainer.appendChild(gridDiv);
@@ -132,7 +118,7 @@ function updateHistoryUI(historyArray) {
     }
 }
 
-// Live sync database collection callback hook
+// Live sync database history
 if (db) {
     db.ref('history').limitToLast(35).on('value', (snapshot) => {
         const data = snapshot.val();
@@ -143,7 +129,7 @@ if (db) {
     });
 }
 
-// Toggle Dropdown Sheet Events with State Control
+// Toggle Dropdown Sheet Events
 if (historyDropdownTrigger && dropdownPanel) {
     historyDropdownTrigger.onclick = (e) => {
         e.stopPropagation();
@@ -179,18 +165,10 @@ function removeBlackFromVideo() {
                 }
             }
             ctx.putImageData(imageData, 0, 0);
-            if (!isGameStartedYet) {
-                isGameStartedYet = true;
-                setupMultiplayerSystem(); // Pehle network room active karenge
-            }
         } catch(e) {
             if (planeCanvas.width > 0 && planeCanvas.height > 0) {
                 ctx.clearRect(0, 0, planeCanvas.width, planeCanvas.height);
                 ctx.drawImage(planeVideo, 0, 0, planeCanvas.width, planeCanvas.height);
-            }
-            if (!isGameStartedYet) {
-                isGameStartedYet = true;
-                setupMultiplayerSystem();
             }
         }
     }
@@ -204,10 +182,8 @@ if (planeVideo) {
     planeVideo.addEventListener('loadeddata', () => {
         planeVideo.play().then(() => {
             removeBlackFromVideo();
-        }).catch(() => {
-            setTimeout(() => {
-                if(!isGameStartedYet) { isGameStartedYet = true; setupMultiplayerSystem(); }
-            }, 1000);
+        }).catch((err) => {
+            console.log("Video play pending interaction:", err);
         });
     });
 }
@@ -237,55 +213,45 @@ function updateCounterColor(multiplier) {
 /* REALTIME MULTIPLAYER SYSTEM FLOW */
 function setupMultiplayerSystem() {
     if (!db) {
-        startMasterLoop(); // Backup local mode agar Firebase na mile
+        isHost = true;
+        startMasterLoop(); 
         return;
     }
 
-    // 1. Apne unique device user create karo room list ke andar
     const myUserRef = db.ref("roomPlayers").push();
     myPlayerKey = myUserRef.key;
 
-    // Jaise hi user page band karega, automatic list se hat jayega (.onDisconnect)
     myUserRef.set({ timestamp: firebase.database.ServerValue.TIMESTAMP });
     myUserRef.onDisconnect().remove();
 
-    // 2. Pure room list ko track karo real-time update ke liye
     db.ref("roomPlayers").on("value", (snapshot) => {
         const players = snapshot.val();
         if (!players) {
-            // Room khali hai, pause loop
             currentHostKey = null;
             isHost = false;
             stopGameEngineLoop();
             return;
         }
 
-        // Sabhi unique sorted user IDs nikaalo (Jo pehle aaya wo sabse upar)
         const sortedKeys = Object.keys(players).sort((a, b) => players[a].timestamp - players[b].timestamp);
         const dynamicLeader = sortedKeys[0];
 
-        // Agar leader change hua ya host hat gaya, tab dynamic handle assignment shuru hoga
         if (currentHostKey !== dynamicLeader) {
             currentHostKey = dynamicLeader;
             
             if (myPlayerKey === currentHostKey) {
-                // MUBARAK HO! Aap ab is room ke dynamic Host/Master ban gaye ho
                 isHost = true;
                 db.ref("currentRound/activeHost").set(myPlayerKey);
-                
-                // Agar loop active nahi tha, toh master sync initiate karega
                 if (!gameLoopActive) {
                     startMasterLoop();
                 }
             } else {
                 isHost = false;
-                // Regular view stream connection listener activate karein
                 listenToHostEngine();
             }
         }
     });
 
-    // 3. Status listener taaki crashes and animations dono frames par transparently execute ho
     db.ref("currentRound/status").on("value", (snap) => {
         let status = snap.val();
         if(status === "waiting" && !isHost) {
@@ -297,11 +263,14 @@ function setupMultiplayerSystem() {
 function stopGameEngineLoop() {
     gameLoopActive = false;
     cancelAnimationFrame(animationFrameId);
-    if (counter) counter.innerText = "PAUSED (Waiting for players)";
+    if (counter) {
+        counter.style.display = "block";
+        counter.innerText = "WAITING FOR PLAYERS";
+    }
 }
 
 function startMasterLoop() {
-    if (!isHost && db) return; // Sirf active host control karega loop cycle
+    if (!isHost) return; 
     gameLoopActive = true;
 
     if (db) db.ref("currentRound/status").set("waiting");
@@ -328,9 +297,8 @@ function startMasterLoop() {
         timerLine.classList.add("timer-active");
     }
 
-    // 10 seconds betting countdown line interval
     setTimeout(() => {
-        if (!gameLoopActive) return;
+        if (!gameLoopActive || !isHost) return;
         gameElements.forEach(el => { if (el) el.style.display = "none"; }); 
         if (counter) counter.style.display = "block"; 
         initGraphEngine();
@@ -386,11 +354,7 @@ function initGraphEngine() {
         db.ref("currentRound/status").set("flying");
 
         db.ref("currentRound/period").transaction((currentPeriod) => {
-            if (currentPeriod === null) {
-                return 11111111;
-            } else {
-                return parseInt(currentPeriod) + 1;
-            }
+            return currentPeriod === null ? 11111111 : parseInt(currentPeriod) + 1;
         });
         
         db.ref("currentRound/adminOverride").once("value", (snap) => {
@@ -404,7 +368,6 @@ function initGraphEngine() {
         });
         
         db.ref("currentRound/multiplier").set(1.00);
-        // Master frame render engine execute shuru
         window.dispatchEvent(new CustomEvent("gameRoundStarted"));
         animationFrameId = requestAnimationFrame(animateEngine);
     } else if (!db) {
@@ -415,7 +378,7 @@ function initGraphEngine() {
 }
 
 function animateEngine(timestamp) {
-    if (isCrashed || !isHost) return; // Sirf host local mathematics compute karega
+    if (isCrashed || !isHost) return; 
     if (!startTime) startTime = timestamp;
     
     let currentX, currentY;
@@ -479,7 +442,6 @@ function animateEngine(timestamp) {
         updateCounterColor(currentMultiplier);
     }
     
-    // Cloud stream coordinate node updates push seamlessly
     if (db) {
         db.ref("currentRound/multiplier").set(parseFloat(currentMultiplier.toFixed(2)));
     }
@@ -491,16 +453,13 @@ function animateEngine(timestamp) {
 function listenToHostEngine() {
     if (isHost || !db) return;
 
-    // Realtime database node mapping for viewers screens
     db.ref("currentRound/multiplier").on("value", (snapshot) => {
         if (isHost) return; 
         let liveMultiplier = snapshot.val() || 1.00;
 
-        // Animate state status checking filter bypass matrix
         db.ref("currentRound/status").once("value", (statusSnap) => {
             if (statusSnap.val() !== "flying" || isCrashed) return;
 
-            // Reverse math mapping using Logarithmic timeline bounds
             let fakeElapsedSeconds = Math.log2(liveMultiplier) * 8.5;
             let fakeElapsedMs = fakeElapsedSeconds * 1000;
             
@@ -542,7 +501,6 @@ function listenToHostEngine() {
         });
     });
 
-    // Cloud crash sequence global listener catch
     db.ref("currentRound/status").on("value", (snap) => {
         if (isHost) return;
         let currentStatus = snap.val();
@@ -599,9 +557,13 @@ function triggerCrashSequence(lastX, lastY) {
     }, 3000);
 }
 
-window.onload = () => {
-    // Canvas setup configuration init
-};
+// FIX: Window completely ready hone par hi multiplayer network activate hoga
+window.addEventListener("DOMContentLoaded", () => {
+    if (!isGameStartedYet) { 
+        isGameStartedYet = true; 
+        setupMultiplayerSystem(); 
+    }
+});
 
 /* TABS & INPUT LOGIC CONTROL */
 document.querySelectorAll(".switch").forEach(sw=>{
