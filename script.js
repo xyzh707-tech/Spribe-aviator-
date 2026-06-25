@@ -1,9 +1,5 @@
-/* ============================================================
-   FRONTEND - SIRF DISPLAY (TV SCREEN)
-   Game logic (Plane udana, crash, timer) ab TERMUX (Node.js) karega.
-   ============================================================ */
-
-// 1. FIREBASE INITIALIZATION
+/* BRIDGE INITIALIZATION & CORE CONTROL */
+// Firebase initialization using CDN Globals (No import errors)
 const firebaseConfig = {
   apiKey: "AIzaSyCE-bz-QbLpAF4qLqejGHtE3qS8zdQjmAY",
   authDomain: "aviator-b8af3.firebaseapp.com",
@@ -15,13 +11,13 @@ const firebaseConfig = {
   measurementId: "G-2294PJHNHZ"
 };
 
+// Global handles initialize safely
 let db = null;
 if (typeof firebase !== 'undefined') {
     firebase.initializeApp(firebaseConfig);
     db = firebase.database();
 }
 
-// 2. DOM ELEMENTS (Screen Components)
 const timerLine = document.getElementById("timerLine");
 const gameElements = document.querySelectorAll(".game-element");
 const graphArea = document.getElementById("graphArea");
@@ -36,65 +32,129 @@ const glowAreaPath = document.getElementById("glowAreaPath");
 const raysBg = document.getElementById("raysBg");
 const lightBeam = document.getElementById("lightBeam");
 const multiBar = document.querySelector(".multi-bar");
-const historyDropdownTrigger = document.getElementById("historyDropdownTrigger");
+
+// Target Modal Components for History Dropdown Expand Tool
+const historyDropdownTrigger = document.getElementById("historyDropdownTrigger"); 
 const dropdownPanel = document.getElementById("roundHistoryDropdownPanel");
 const dropdownCloseBtn = document.getElementById("dropdownCloseTrigger");
 const dropdownGridContainer = document.getElementById("historyMatrixGrid");
 
-// Screen Boundaries (Sirf starting position fallback ke liye)
-const startX = 35;
-const startY = 225; // height - 25
+let startTime = null;
+let isCrashed = false;
+let isHoldingAtTop = false;
+let holdStartTime = null;
+let animationFrameId = null;
+let isGameStartedYet = false; 
+
+// NEW MULTI-PLAYER MULTI-DEVICE VARIABLES
+let myPlayerKey = null;      // Is device ka unique session ID
+let currentHostKey = null;   // Abhi jo calculations sambhal raha hai uski ID
+let isHost = false;          // Kya ye device khud host hai?
+let gameLoopActive = false;  // Kya game active state mein chal raha hai?
+
+let crashTarget = 15.00;
+const flyToTopDuration = 4000; 
+
+// ORIGINAL AVIATOR SCREEN BOUNDS
+const width = 460; 
+const height = 250;
+const startX = 35;           
+const startY = height - 25;  
+const endX = width * 0.52;   
+const endY = height * 0.42;  
 const tailOffsetX = 4;
 const tailOffsetY = 42;
 
-// 3. HISTORY UI UPDATE (Waise ka waisa)
+// Real Aviator Algorithm for Randomized Target Multiplier
+function generateRandomCrashTarget() {
+    let rand = Math.random() * 100;
+    if (rand < 11) {
+        return parseFloat((1.00 + Math.random() * 0.04).toFixed(2));
+    } else if (rand < 55) {
+        return parseFloat((1.05 + Math.random() * 0.94).toFixed(2));
+    } else if (rand < 90) {
+        return parseFloat((2.00 + Math.random() * 7.50).toFixed(2));
+    } else {
+        return parseFloat((10.00 + Math.random() * 85.00).toFixed(2));
+    }
+}
+
+// History updates sync UI builder with clean layouts & Dropdown content feeds
 function updateHistoryUI(historyArray) {
     if (!multiBar) return;
     multiBar.innerHTML = "";
+    
     const recentHistory = historyArray.slice(-15);
     recentHistory.reverse().forEach(val => {
         const multiDiv = document.createElement("div");
         multiDiv.className = "multi";
+        
         let num = parseFloat(val);
-        if (num >= 1.00 && num <= 1.99) multiDiv.classList.add("low");
-        else if (num >= 2.00 && num <= 9.99) multiDiv.classList.add("mid");
-        else if (num >= 10.00) multiDiv.classList.add("high");
-        else multiDiv.classList.add("low");
+        if (num >= 1.00 && num <= 1.99) { 
+            multiDiv.classList.add("low"); 
+        } 
+        else if (num >= 2.00 && num <= 9.99) { 
+            multiDiv.classList.add("mid"); 
+        } 
+        else if (num >= 10.00) { 
+            multiDiv.classList.add("high"); 
+        } else {
+            multiDiv.classList.add("low");
+        }
+        
         multiDiv.innerText = `${num.toFixed(2)}x`;
         multiBar.appendChild(multiDiv);
     });
 
     if (dropdownGridContainer) {
         dropdownGridContainer.innerHTML = "";
-        const detailedHistory = historyArray.slice(-32);
+        const detailedHistory = historyArray.slice(-32); 
         detailedHistory.reverse().forEach(val => {
             const gridDiv = document.createElement("div");
             gridDiv.className = "multi";
+            
             let num = parseFloat(val);
-            if (num >= 1.00 && num <= 1.99) gridDiv.classList.add("low");
-            else if (num >= 2.00 && num <= 9.99) gridDiv.classList.add("mid");
-            else if (num >= 10.00) gridDiv.classList.add("high");
-            else gridDiv.classList.add("low");
+            if (num >= 1.00 && num <= 1.99) { 
+                gridDiv.classList.add("low"); 
+            } 
+            else if (num >= 2.00 && num <= 9.99) { 
+                gridDiv.classList.add("mid"); 
+            } 
+            else if (num >= 10.00) { 
+                gridDiv.classList.add("high"); 
+            } else {
+                gridDiv.classList.add("low");
+            }
+            
             gridDiv.innerText = `${num.toFixed(2)}x`;
             dropdownGridContainer.appendChild(gridDiv);
         });
     }
 }
 
-// History Listener
+// Live sync database collection callback hook
 if (db) {
     db.ref('history').limitToLast(35).on('value', (snapshot) => {
         const data = snapshot.val();
-        if (data) updateHistoryUI(Object.values(data));
+        if (data) {
+            const historyList = Object.values(data);
+            updateHistoryUI(historyList);
+        }
     });
 }
 
-// 4. DROPDOWN TOGGLE (Waise ka waisa)
+// Toggle Dropdown Sheet Events with State Control
 if (historyDropdownTrigger && dropdownPanel) {
-    historyDropdownTrigger.onclick = (e) => { e.stopPropagation(); dropdownPanel.classList.toggle("show"); };
+    historyDropdownTrigger.onclick = (e) => {
+        e.stopPropagation();
+        dropdownPanel.classList.toggle("show");
+    };
 }
 if (dropdownCloseBtn && dropdownPanel) {
-    dropdownCloseBtn.onclick = (e) => { e.stopPropagation(); dropdownPanel.classList.remove("show"); };
+    dropdownCloseBtn.onclick = (e) => {
+        e.stopPropagation();
+        dropdownPanel.classList.remove("show");
+    };
 }
 document.addEventListener("click", (e) => {
     if (dropdownPanel && !dropdownPanel.contains(e.target) && e.target !== historyDropdownTrigger) {
@@ -102,7 +162,7 @@ document.addEventListener("click", (e) => {
     }
 });
 
-// 5. PLANE VIDEO CHROMA FILTER (Sirf plane ki video clean karne ke liye, game start nahi karega)
+/* CORS SAFE & GLITCH FREE CHROMA FILTER */
 function removeBlackFromVideo() {
     if (planeVideo && planeCanvas && ctx && planeVideo.readyState >= 2) {
         try {
@@ -119,26 +179,41 @@ function removeBlackFromVideo() {
                 }
             }
             ctx.putImageData(imageData, 0, 0);
+            if (!isGameStartedYet) {
+                isGameStartedYet = true;
+                setupMultiplayerSystem(); // Pehle network room active karenge
+            }
         } catch(e) {
-            // Ignore errors
+            if (planeCanvas.width > 0 && planeCanvas.height > 0) {
+                ctx.clearRect(0, 0, planeCanvas.width, planeCanvas.height);
+                ctx.drawImage(planeVideo, 0, 0, planeCanvas.width, planeCanvas.height);
+            }
+            if (!isGameStartedYet) {
+                isGameStartedYet = true;
+                setupMultiplayerSystem();
+            }
         }
     }
     requestAnimationFrame(removeBlackFromVideo);
 }
 
 if (planeVideo) {
-    planeVideo.muted = true;
+    planeVideo.muted = true; 
     planeVideo.setAttribute('playsinline', '');
-    planeVideo.crossOrigin = "anonymous";
+    planeVideo.crossOrigin = "anonymous"; 
     planeVideo.addEventListener('loadeddata', () => {
-        planeVideo.play().catch(() => {});
-        removeBlackFromVideo();
+        planeVideo.play().then(() => {
+            removeBlackFromVideo();
+        }).catch(() => {
+            setTimeout(() => {
+                if(!isGameStartedYet) { isGameStartedYet = true; setupMultiplayerSystem(); }
+            }, 1000);
+        });
     });
 }
 
-// 6. COUNTER COLOR UPDATE (Sirf UI styling ke liye)
 function updateCounterColor(multiplier) {
-    if (!counter || !graphArea || !lightBeam || !raysBg) return;
+    if (isCrashed || !counter || !graphArea || !lightBeam || !raysBg) return;
     counter.style.color = "#ffffff";
     if (multiplier >= 1.00 && multiplier < 2.00) {
         graphArea.style.setProperty('background', '#000000', 'important');
@@ -153,133 +228,418 @@ function updateCounterColor(multiplier) {
         raysBg.style.filter = "drop-shadow(0px 0px 8px rgba(149, 17, 240, 0.35))";
     } else if (multiplier >= 10.00) {
         graphArea.style.setProperty('background', 'radial-gradient(circle at 50% 50%, #0c0208 0%, #050003 100%)', 'important');
-        counter.style.textShadow = "0px 0px 25px rgba(225, 5, 110, 0.9)";
         lightBeam.style.background = "radial-gradient(ellipse 70% 100% at 50% 40%, rgba(225, 5, 110, 0.35) 0%, rgba(0,0,0,0) 85%)";
         lightBeam.classList.add("show");
         raysBg.style.filter = "drop-shadow(0px 0px 8px rgba(225, 5, 110, 0.4))";
     }
 }
 
-// 7. ============================================================
-//    📺 LIVE DISPLAY ENGINE (YEH SABSE IMPORTANT HAI)
-//    Ye Firebase se data read karega aur screen update karega.
-//    Jaise hi Termux DB me kuch likhega, ye turant dikhayega.
-// ============================================================
-if (db) {
-    db.ref('currentRound').on('value', (snapshot) => {
-        const data = snapshot.val();
-        if (!data) return;
+/* REALTIME MULTIPLAYER SYSTEM FLOW */
+function setupMultiplayerSystem() {
+    if (!db) {
+        startMasterLoop(); // Backup local mode agar Firebase na mile
+        return;
+    }
 
-        // A. Data Read Karo (Jo Termux ne bheja)
-        const multiplier = data.multiplier || 1.00;
-        const isCrashed = data.isCrashed || false;
-        const planeX = data.planeX || startX;
-        const planeY = data.planeY || startY;
-        const crashTarget = data.crashTarget || 1.00;
+    // 1. Apne unique device user create karo room list ke andar
+    const myUserRef = db.ref("roomPlayers").push();
+    myPlayerKey = myUserRef.key;
 
-        // B. Counter Update
-        if (counter) {
-            counter.style.display = 'block';
-            counter.innerText = multiplier.toFixed(2) + 'x';
-            if (!isCrashed) {
-                updateCounterColor(multiplier);
+    // Jaise hi user page band karega, automatic list se hat jayega (.onDisconnect)
+    myUserRef.set({ timestamp: firebase.database.ServerValue.TIMESTAMP });
+    myUserRef.onDisconnect().remove();
+
+    // 2. Pure room list ko track karo real-time update ke liye
+    db.ref("roomPlayers").on("value", (snapshot) => {
+        const players = snapshot.val();
+        if (!players) {
+            // Room khali hai, pause loop
+            currentHostKey = null;
+            isHost = false;
+            stopGameEngineLoop();
+            return;
+        }
+
+        // Sabhi unique sorted user IDs nikaalo (Jo pehle aaya wo sabse upar)
+        const sortedKeys = Object.keys(players).sort((a, b) => players[a].timestamp - players[b].timestamp);
+        const dynamicLeader = sortedKeys[0];
+
+        // Agar leader change hua ya host hat gaya, tab dynamic handle assignment shuru hoga
+        if (currentHostKey !== dynamicLeader) {
+            currentHostKey = dynamicLeader;
+            
+            if (myPlayerKey === currentHostKey) {
+                // MUBARAK HO! Aap ab is room ke dynamic Host/Master ban gaye ho
+                isHost = true;
+                db.ref("currentRound/activeHost").set(myPlayerKey);
+                
+                // Agar loop active nahi tha, toh master sync initiate karega
+                if (!gameLoopActive) {
+                    startMasterLoop();
+                }
             } else {
-                // Crash hua toh red color
-                counter.style.color = "#cb1624";
-                counter.style.textShadow = "none";
-                if (lightBeam) lightBeam.classList.remove('show');
-                if (raysBg) raysBg.style.filter = "none";
+                isHost = false;
+                // Regular view stream connection listener activate karein
+                listenToHostEngine();
             }
         }
+    });
 
-        // C. Plane ki Position Update (Smooth instant move)
-        if (planeContainer) {
-            planeContainer.style.transition = 'none';
-            planeContainer.style.display = 'block';
-            planeContainer.style.left = (planeX - tailOffsetX) + 'px';
-            planeContainer.style.top = (planeY - tailOffsetY) + 'px';
-        }
-
-        // D. Trail / Glow Path (Simple curve)
-        // Agar Termux path bhejta hai toh use karo, warna simple line
-        if (trailPath) {
-            let pathD = `M ${startX} ${startY} Q ${startX + 100} ${startY - 50} ${planeX} ${planeY}`;
-            trailPath.setAttribute('d', pathD);
-            trailPath.style.opacity = (isCrashed ? '0' : '1');
-        }
-        if (glowAreaPath) {
-            let glowD = `M ${startX} ${startY} Q ${startX + 100} ${startY - 50} ${planeX} ${planeY} L ${planeX} ${startY} Z`;
-            glowAreaPath.setAttribute('d', glowD);
-            glowAreaPath.style.opacity = (isCrashed ? '0' : '1');
-        }
-
-        // E. "Flew Away" Label
-        if (flewAwayLabel) {
-            if (isCrashed) flewAwayLabel.classList.add('show');
-            else flewAwayLabel.classList.remove('show');
-        }
-
-        // F. Timer Line (Bar) - Active rahega jab tak crash na ho
-        if (timerLine) {
-            if (isCrashed) timerLine.classList.remove('timer-active');
-            else timerLine.classList.add('timer-active');
-        }
-
-        // G. Rays & Light Beam
-        if (raysBg) {
-            if (isCrashed) raysBg.classList.add('rays-paused');
-            else raysBg.classList.remove('rays-paused');
-        }
-        if (lightBeam) {
-            if (isCrashed) lightBeam.classList.remove('show');
-            else lightBeam.classList.add('show');
-        }
-
-        // H. GraphArea background default
-        if (graphArea && !isCrashed) {
-            graphArea.style.setProperty('background', '#000000', 'important');
+    // 3. Status listener taaki crashes and animations dono frames par transparently execute ho
+    db.ref("currentRound/status").on("value", (snap) => {
+        let status = snap.val();
+        if(status === "waiting" && !isHost) {
+            triggerViewerWaitingState();
         }
     });
-} else {
-    console.warn("Firebase not initialized. Display will not work.");
 }
 
-// 8. BETTING CARDS & TABS LOGIC (Bilkul waise ka waisa, koi change nahi)
-document.querySelectorAll(".switch").forEach(sw => {
+function stopGameEngineLoop() {
+    gameLoopActive = false;
+    cancelAnimationFrame(animationFrameId);
+    if (counter) counter.innerText = "PAUSED (Waiting for players)";
+}
+
+function startMasterLoop() {
+    if (!isHost && db) return; // Sirf active host control karega loop cycle
+    gameLoopActive = true;
+
+    if (db) db.ref("currentRound/status").set("waiting");
+
+    if (graphArea) graphArea.style.display = "block"; 
+    gameElements.forEach(el => { if (el) el.style.display = ""; });
+    if (counter) counter.style.display = "none"; 
+    if (flewAwayLabel) flewAwayLabel.classList.remove("show");
+    
+    if (trailPath) { trailPath.removeAttribute("d"); trailPath.style.opacity = "0"; }
+    if (glowAreaPath) { glowAreaPath.removeAttribute("d"); glowAreaPath.style.opacity = "0"; }
+    if (raysBg) { raysBg.classList.add("rays-paused"); raysBg.style.filter = "none"; }
+    
+    if (planeContainer) {
+        planeContainer.style.transition = "none"; 
+        planeContainer.style.display = "block";
+        planeContainer.style.left = `${startX - tailOffsetX}px`;
+        planeContainer.style.top = `${startY - tailOffsetY}px`;
+    }
+    
+    if (timerLine) {
+        timerLine.classList.remove("timer-active");
+        void timerLine.offsetWidth; 
+        timerLine.classList.add("timer-active");
+    }
+
+    // 10 seconds betting countdown line interval
+    setTimeout(() => {
+        if (!gameLoopActive) return;
+        gameElements.forEach(el => { if (el) el.style.display = "none"; }); 
+        if (counter) counter.style.display = "block"; 
+        initGraphEngine();
+    }, 10000); 
+}
+
+function triggerViewerWaitingState() {
+    if (graphArea) graphArea.style.display = "block"; 
+    gameElements.forEach(el => { if (el) el.style.display = ""; });
+    if (counter) counter.style.display = "none"; 
+    if (flewAwayLabel) flewAwayLabel.classList.remove("show");
+    
+    if (trailPath) { trailPath.removeAttribute("d"); trailPath.style.opacity = "0"; }
+    if (glowAreaPath) { glowAreaPath.removeAttribute("d"); glowAreaPath.style.opacity = "0"; }
+    if (raysBg) { raysBg.classList.add("rays-paused"); raysBg.style.filter = "none"; }
+    
+    if (planeContainer) {
+        planeContainer.style.transition = "none"; 
+        planeContainer.style.display = "block";
+        planeContainer.style.left = `${startX - tailOffsetX}px`;
+        planeContainer.style.top = `${startY - tailOffsetY}px`;
+    }
+    
+    if (timerLine) {
+        timerLine.classList.remove("timer-active");
+        void timerLine.offsetWidth; 
+        timerLine.classList.add("timer-active");
+    }
+}
+
+function initGraphEngine() {
+    startTime = null; isCrashed = false; isHoldingAtTop = false; holdStartTime = null;
+    
+    if (graphArea) graphArea.style.setProperty('background', '#000000', 'important');
+    if (counter) {
+        counter.style.color = "#ffffff";
+        counter.style.textShadow = "0px 4px 10px rgba(0, 0, 0, 0.8)";
+        counter.innerText = "1.00x";
+    }
+    if (flewAwayLabel) flewAwayLabel.classList.remove("show");
+    if (lightBeam) lightBeam.classList.remove("show");
+    if (raysBg) { raysBg.classList.remove("rays-paused"); raysBg.style.filter = "none"; }
+    if (trailPath) { trailPath.setAttribute("d", ""); trailPath.style.opacity = "1"; }
+    if (glowAreaPath) { glowAreaPath.setAttribute("d", ""); glowAreaPath.style.opacity = "1"; }
+    if (planeContainer) {
+        planeContainer.style.transition = "none";
+        planeContainer.style.display = "block";
+        planeContainer.style.left = `${startX - tailOffsetX}px`;
+        planeContainer.style.top = `${startY - tailOffsetY}px`;
+    }
+
+    if (db && isHost) {
+        db.ref("currentRound/status").set("flying");
+
+        db.ref("currentRound/period").transaction((currentPeriod) => {
+            if (currentPeriod === null) {
+                return 11111111;
+            } else {
+                return parseInt(currentPeriod) + 1;
+            }
+        });
+        
+        db.ref("currentRound/adminOverride").once("value", (snap) => {
+            let overrideData = snap.val();
+            if (overrideData && overrideData.active === true) {
+                crashTarget = parseFloat(overrideData.target);
+            } else {
+                crashTarget = generateRandomCrashTarget();
+            }
+            db.ref("currentRound/crashTarget").set(parseFloat(crashTarget.toFixed(2)));
+        });
+        
+        db.ref("currentRound/multiplier").set(1.00);
+        // Master frame render engine execute shuru
+        window.dispatchEvent(new CustomEvent("gameRoundStarted"));
+        animationFrameId = requestAnimationFrame(animateEngine);
+    } else if (!db) {
+        crashTarget = generateRandomCrashTarget();
+        window.dispatchEvent(new CustomEvent("gameRoundStarted"));
+        animationFrameId = requestAnimationFrame(animateEngine);
+    }
+}
+
+function animateEngine(timestamp) {
+    if (isCrashed || !isHost) return; // Sirf host local mathematics compute karega
+    if (!startTime) startTime = timestamp;
+    
+    let currentX, currentY;
+    let currentMultiplier = 1.00;
+    const cpX = startX + (endX - startX) * 0.45;
+    const cpY = startY;
+    
+    let totalElapsedSeconds = (timestamp - startTime) / 1000;
+    
+    if (!isHoldingAtTop) {
+        let elapsed = timestamp - startTime;
+        let progress = elapsed / flyToTopDuration;
+        if (progress > 1) progress = 1;
+        let smoothProgress = Math.sin(progress * Math.PI / 2);
+        currentX = (1 - smoothProgress) * (1 - smoothProgress) * startX + 2 * (1 - smoothProgress) * smoothProgress * cpX + smoothProgress * smoothProgress * endX;
+        currentY = (1 - smoothProgress) * (1 - smoothProgress) * startY + 2 * (1 - smoothProgress) * smoothProgress * cpY + smoothProgress * smoothProgress * endY;
+        let takeoffFloat = Math.sin(timestamp * 0.005) * 1.2;
+        currentY += takeoffFloat * progress;
+        
+        currentMultiplier = Math.pow(2, totalElapsedSeconds / 8.5);
+        
+        if (currentMultiplier >= crashTarget) {
+            currentMultiplier = crashTarget;
+            if (counter) counter.innerText = `${crashTarget.toFixed(2)}x`;
+            if (db) db.ref("currentRound/multiplier").set(parseFloat(currentMultiplier.toFixed(2)));
+            triggerCrashSequence(currentX, currentY);
+            return;
+        }
+        if (progress >= 1) { isHoldingAtTop = true; holdStartTime = timestamp; }
+    } else {
+        currentX = endX;
+        let wave1 = Math.sin(timestamp * 0.0025) * 14.5;
+        let wave2 = Math.cos(timestamp * 0.005) * 3.5;
+        currentY = endY + wave1 + wave2;
+        
+        currentMultiplier = Math.pow(2, totalElapsedSeconds / 8.5);
+        
+        if (currentMultiplier >= crashTarget) {
+            currentMultiplier = crashTarget;
+            if (counter) counter.innerText = `${crashTarget.toFixed(2)}x`;
+            if (db) db.ref("currentRound/multiplier").set(parseFloat(currentMultiplier.toFixed(2)));
+            triggerCrashSequence(currentX, currentY);
+            return;
+        }
+    }
+    
+    let pathData = "";
+    let progressCheck = !isHoldingAtTop ? (timestamp - startTime) / flyToTopDuration : 1;
+    if (progressCheck > 0.015) {
+        pathData = `M ${startX} ${startY} Q ${cpX} ${cpY} ${currentX} ${currentY}`;
+    }
+    if (trailPath) trailPath.setAttribute("d", pathData);
+    let glowData = pathData ? `${pathData} L ${currentX} ${startY} Z` : "";
+    if (glowAreaPath) glowAreaPath.setAttribute("d", glowData);
+    if (planeContainer) {
+        planeContainer.style.left = `${currentX - tailOffsetX}px`;
+        planeContainer.style.top = `${currentY - tailOffsetY}px`;
+    }
+    if (counter) {
+        counter.innerText = `${currentMultiplier.toFixed(2)}x`;
+        updateCounterColor(currentMultiplier);
+    }
+    
+    // Cloud stream coordinate node updates push seamlessly
+    if (db) {
+        db.ref("currentRound/multiplier").set(parseFloat(currentMultiplier.toFixed(2)));
+    }
+    window.dispatchEvent(new CustomEvent("multiplierUpdate", { detail: { multiplier: currentMultiplier } }));
+    animationFrameId = requestAnimationFrame(animateEngine);
+}
+
+/* VIEWER STREAM SYNC METHOD */
+function listenToHostEngine() {
+    if (isHost || !db) return;
+
+    // Realtime database node mapping for viewers screens
+    db.ref("currentRound/multiplier").on("value", (snapshot) => {
+        if (isHost) return; 
+        let liveMultiplier = snapshot.val() || 1.00;
+
+        // Animate state status checking filter bypass matrix
+        db.ref("currentRound/status").once("value", (statusSnap) => {
+            if (statusSnap.val() !== "flying" || isCrashed) return;
+
+            // Reverse math mapping using Logarithmic timeline bounds
+            let fakeElapsedSeconds = Math.log2(liveMultiplier) * 8.5;
+            let fakeElapsedMs = fakeElapsedSeconds * 1000;
+            
+            let currentX, currentY;
+            const cpX = startX + (endX - startX) * 0.45;
+            const cpY = startY;
+            let timestamp = performance.now();
+
+            let progress = fakeElapsedMs / flyToTopDuration;
+            if (progress > 1) progress = 1;
+            let smoothProgress = Math.sin(progress * Math.PI / 2);
+
+            if (progress < 1) {
+                currentX = (1 - smoothProgress) * (1 - smoothProgress) * startX + 2 * (1 - smoothProgress) * smoothProgress * cpX + smoothProgress * smoothProgress * endX;
+                currentY = (1 - smoothProgress) * (1 - smoothProgress) * startY + 2 * (1 - smoothProgress) * smoothProgress * cpY + smoothProgress * smoothProgress * endY;
+                let takeoffFloat = Math.sin(timestamp * 0.005) * 1.2;
+                currentY += takeoffFloat * progress;
+            } else {
+                currentX = endX;
+                let wave1 = Math.sin(timestamp * 0.0025) * 14.5;
+                let wave2 = Math.cos(timestamp * 0.005) * 3.5;
+                currentY = endY + wave1 + wave2;
+            }
+
+            let pathData = progress > 0.015 ? `M ${startX} ${startY} Q ${cpX} ${cpY} ${currentX} ${currentY}` : "";
+            if (trailPath) trailPath.setAttribute("d", pathData);
+            let glowData = pathData ? `${pathData} L ${currentX} ${startY} Z` : "";
+            if (glowAreaPath) glowAreaPath.setAttribute("d", glowData);
+            
+            if (planeContainer) {
+                planeContainer.style.left = `${currentX - tailOffsetX}px`;
+                planeContainer.style.top = `${currentY - tailOffsetY}px`;
+            }
+            if (counter) {
+                counter.innerText = `${liveMultiplier.toFixed(2)}x`;
+                updateCounterColor(liveMultiplier);
+            }
+            window.dispatchEvent(new CustomEvent("multiplierUpdate", { detail: { multiplier: liveMultiplier } }));
+        });
+    });
+
+    // Cloud crash sequence global listener catch
+    db.ref("currentRound/status").on("value", (snap) => {
+        if (isHost) return;
+        let currentStatus = snap.val();
+        if (currentStatus === "crashed" && !isCrashed) {
+            db.ref("currentRound/crashTarget").once("value", (targetSnap) => {
+                crashTarget = targetSnap.val() || 1.00;
+                let lastX = parseFloat(planeContainer.style.left) || endX;
+                let lastY = parseFloat(planeContainer.style.top) || endY;
+                triggerCrashSequence(lastX, lastY);
+            });
+        }
+    });
+}
+
+function triggerCrashSequence(lastX, lastY) {
+    window.dispatchEvent(new CustomEvent("gameCrashed"));
+    isCrashed = true;
+    cancelAnimationFrame(animationFrameId);
+    
+    if (db && isHost) {
+        try {
+            db.ref("currentRound/status").set("crashed");
+            db.ref('history').push(parseFloat(crashTarget.toFixed(2)));
+            db.ref("currentRound/adminOverride").set({
+                active: false,
+                target: "2.00",
+                timestamp: firebase.database.ServerValue.TIMESTAMP
+            });
+        } catch (e) {
+            console.error("Database sync operation fault:", e);
+        }
+    }
+    
+    if (raysBg) raysBg.classList.add("rays-paused");
+    if (flewAwayLabel) flewAwayLabel.classList.add("show");
+    if (lightBeam) lightBeam.classList.remove("show");
+    if (counter) {
+        counter.innerText = `${crashTarget.toFixed(2)}x`;
+        counter.style.color = "#cb1624";
+        counter.style.textShadow = "none";
+    }
+    if (trailPath) trailPath.style.opacity = "0";
+    if (glowAreaPath) glowAreaPath.style.opacity = "0";
+    if (planeContainer) {
+        planeContainer.style.transition = "left 0.7s cubic-bezier(0.4, 0.0, 0.2, 1), top 0.7s cubic-bezier(0.4, 0.0, 0.2, 1)";
+        planeContainer.style.left = `${width + 180}px`; 
+        planeContainer.style.top = `${lastY - 150}px`; 
+    }
+    
+    setTimeout(() => { 
+        if (isHost && gameLoopActive) {
+            startMasterLoop(); 
+        }
+    }, 3000);
+}
+
+window.onload = () => {
+    // Canvas setup configuration init
+};
+
+/* TABS & INPUT LOGIC CONTROL */
+document.querySelectorAll(".switch").forEach(sw=>{
     const buttons = sw.querySelectorAll(".switch-btn");
-    buttons.forEach(btn => {
-        btn.onclick = () => {
-            buttons.forEach(b => b.classList.remove("active"));
+    buttons.forEach(btn=>{
+        btn.onclick = ()=>{
+            buttons.forEach(b=>{ b.classList.remove("active"); });
             btn.classList.add("active");
         };
     });
 });
 
-document.querySelectorAll(".bet-card").forEach(card => {
+document.querySelectorAll(".bet-card").forEach(card=>{
     const input = card.querySelector(".amount-input");
     const circles = card.querySelectorAll(".circle");
-    const minus = circles[0];
-    const plus = circles[1];
+    const minus = circles[0]; 
+    const plus = circles[1];  
+    
     const quickBtns = card.querySelectorAll(".quick button");
     const betBtn = card.querySelector(".bet-btn");
     const betAmount = card.querySelector(".bet-amount");
     const betMain = card.querySelector(".bet-main");
     let lastQuick = null;
-
-    function updateDisplay() {
+    
+    function updateDisplay(){
         if (!input) return;
         let val = parseInt(input.value) || 10;
-        if (val < 10) val = 10;
-        if (val > 8000) val = 8000;
+        if(val < 10) val = 10;
+        if(val > 8000) val = 8000;
         input.value = val;
         if (betAmount) betAmount.innerHTML = val.toLocaleString() + ".00 INR";
     }
     if (input) updateDisplay();
-
-    function setLocked(state) {
+    
+    function setLocked(state){
         if (!input) return;
         input.disabled = state;
-        if (state) {
+        if(state){
             card.classList.add("card-locked");
             if (plus) plus.classList.add("locked");
             if (minus) minus.classList.add("locked");
@@ -288,65 +648,65 @@ document.querySelectorAll(".bet-card").forEach(card => {
             if (plus) plus.classList.remove("locked");
             if (minus) minus.classList.remove("locked");
         }
-        quickBtns.forEach(btn => { btn.disabled = state; });
+        quickBtns.forEach(btn=>{ btn.disabled = state; });
     }
-
-    quickBtns.forEach(btn => {
-        btn.onclick = () => {
-            if (!input || input.disabled) return;
-            const clicked = parseInt(btn.innerText.replace(/[+,]/g, ''));
+    
+    quickBtns.forEach(btn=>{
+        btn.onclick = ()=>{
+            if(!input || input.disabled) return;
+            const clicked = parseInt(btn.innerText.replace(/[+,]/g, '')); 
             let current = parseInt(input.value);
-            if (lastQuick === clicked) { current += clicked; } else { current = clicked; }
-            if (current > 8000) current = 8000;
+            if(lastQuick === clicked){ current += clicked; }else{ current = clicked; }
+            if(current > 8000) current = 8000;
             input.value = current;
             updateDisplay();
-            quickBtns.forEach(b => b.classList.remove("active-quick"));
+            quickBtns.forEach(b=>{ b.classList.remove("active-quick"); });
             btn.classList.add("active-quick");
             lastQuick = clicked;
         };
     });
-
+    
     if (plus) {
-        plus.onclick = () => {
-            if (!input || input.disabled) return;
+        plus.onclick = ()=>{
+            if(!input || input.disabled) return;
             let val = parseInt(input.value);
             val += 10;
-            if (val > 8000) val = 8000;
+            if(val > 8000) val = 8000;
             input.value = val;
             updateDisplay();
         };
     }
-
+    
     if (minus) {
-        minus.onclick = () => {
-            if (!input || input.disabled) return;
+        minus.onclick = ()=>{
+            if(!input || input.disabled) return;
             let val = parseInt(input.value);
             val -= 10;
-            if (val < 10) val = 10;
+            if(val < 10) val = 10;
             input.value = val;
             updateDisplay();
         };
     }
-
+    
     if (input) {
         input.oninput = () => {
             let val = parseInt(input.value) || 10;
-            if (val > 8000) val = 8000;
-            if (val < 10) val = 10;
+            if(val > 8000) val = 8000;
+            if(val < 10) val = 10;
             input.value = val;
             updateDisplay();
         };
     }
-
+    
     if (betBtn) {
-        betBtn.onclick = () => {
-            if (betBtn.classList.contains("active-cashout") || betBtn.classList.contains("successfully-cashedout")) return;
-            if (betBtn.classList.contains("active-bet")) {
+        betBtn.onclick = ()=>{
+            if(betBtn.classList.contains("active-cashout") || betBtn.classList.contains("successfully-cashedout")) return;
+            if(betBtn.classList.contains("active-bet")){
                 betBtn.classList.remove("active-bet");
                 card.classList.remove("active-card");
                 if (betMain) betMain.innerHTML = "BET";
                 setLocked(false);
-            } else {
+            }else{
                 betBtn.classList.add("active-bet");
                 card.classList.add("active-card");
                 if (betMain) betMain.innerHTML = "CANCEL";
@@ -357,12 +717,9 @@ document.querySelectorAll(".bet-card").forEach(card => {
 });
 
 const tabs = document.querySelectorAll(".tab");
-tabs.forEach(tab => {
-    tab.onclick = () => {
-        tabs.forEach(t => t.classList.remove("active-tab"));
+tabs.forEach(tab=>{
+    tab.onclick = ()=>{
+        tabs.forEach(t=>{ t.classList.remove("active-tab"); });
         tab.classList.add("active-tab");
     };
 });
-
-// 9. WINDOW LOAD - Ab bas display ready hai, koi timer nahi chlega
-console.log("✅ Frontend Display Ready. Waiting for Termux Engine data...");
